@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useObjectUrl } from './hooks/useObjectUrl';
 import { analyzeImage } from './vector/analyzeImage';
+import { assessVectorResult } from './vector/benchmark';
 import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
 import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
@@ -27,6 +28,7 @@ export default function App() {
   const sourceUrl = useObjectUrl(file);
   const svgBlob = useMemo(() => result ? new Blob([result.svg], { type: 'image/svg+xml' }) : null, [result]);
   const svgUrl = useObjectUrl(svgBlob);
+  const benchmark = useMemo(() => result ? assessVectorResult(result) : null, [result]);
 
   async function choose(next?: File) {
     if (!next) return;
@@ -108,7 +110,9 @@ export default function App() {
     </section>
 
     {error && <div role="alert" className="error">{error}</div>}
-    {result && <section className="metrics"><span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span><span><b>{Math.round(result.elapsedMs)}</b> ms trace</span></section>}
+    {result && benchmark && <section className="metrics" aria-label="Vector quality diagnostics">
+      <span><b>{benchmark.overallScore}/100</b> vector health</span><span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span><span><b>{Math.round(result.elapsedMs)}</b> ms trace</span>
+    </section>}
 
     <section className="trust"><div><b>01</b><strong>Local processing</strong><p>Your basic conversion runs on your device.</p></div><div><b>02</b><strong>Genuine vector output</strong><p>Editable SVG geometry built from paths and shapes.</p></div><div><b>03</b><strong>No account. No watermark.</strong><p>Convert and download without creating an account.</p></div></section>
   </main>;
