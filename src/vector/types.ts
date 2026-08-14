@@ -14,6 +14,13 @@ export interface ImageAnalysis {
   megapixels: number;
   hasAlpha: boolean;
   likelyKind: VectorPreset;
+  confidence: number;
+  signals: {
+    edgeDensity: number;
+    colorComplexity: number;
+    lightBackground: number;
+    alphaCoverage: number;
+  };
   warnings: string[];
 }
 
