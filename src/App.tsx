@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useObjectUrl } from './hooks/useObjectUrl';
 import { analyzeImage } from './vector/analyzeImage';
 import { assessVectorResult } from './vector/benchmark';
+import { compareRasterToSvg, type FidelityResult } from './vector/fidelity';
 import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
 import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
@@ -23,6 +24,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<VectorResult | null>(null);
+  const [fidelity, setFidelity] = useState<FidelityResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const sourceUrl = useObjectUrl(file);
@@ -37,6 +39,7 @@ export default function App() {
     setAnalysis(null);
     setAnalyzing(true);
     setResult(null);
+    setFidelity(null);
     setError(null);
     try {
       const nextAnalysis = await analyzeImage(next);
@@ -55,8 +58,16 @@ export default function App() {
     if (!file || running) return;
     setRunning(true);
     setError(null);
+    setFidelity(null);
     try {
-      setResult(await engine.vectorize(file, DEFAULT_OPTIONS[preset]));
+      const nextResult = await engine.vectorize(file, DEFAULT_OPTIONS[preset]);
+      setResult(nextResult);
+      try {
+        setFidelity(await compareRasterToSvg(file, nextResult.svg));
+      } catch {
+        // Fidelity scoring is diagnostic; a valid vector should remain downloadable if a browser cannot rasterize it for comparison.
+        setFidelity(null);
+      }
     } catch (err) {
       setResult(null);
       setError(err instanceof Error ? err.message : 'Vectorization failed.');
@@ -111,7 +122,7 @@ export default function App() {
 
     {error && <div role="alert" className="error">{error}</div>}
     {result && benchmark && <section className="metrics" aria-label="Vector quality diagnostics">
-      <span><b>{benchmark.overallScore}/100</b> vector health</span><span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span><span><b>{Math.round(result.elapsedMs)}</b> ms trace</span>
+      {fidelity && <span><b>{fidelity.score}/100</b> visual fidelity</span>}<span><b>{benchmark.overallScore}/100</b> vector health</span><span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span><span><b>{Math.round(result.elapsedMs)}</b> ms trace</span>
     </section>}
 
     <section className="trust"><div><b>01</b><strong>Local processing</strong><p>Your basic conversion runs on your device.</p></div><div><b>02</b><strong>Genuine vector output</strong><p>Editable SVG geometry built from paths and shapes.</p></div><div><b>03</b><strong>No account. No watermark.</strong><p>Convert and download without creating an account.</p></div></section>
