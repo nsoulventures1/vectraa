@@ -2,7 +2,7 @@ import { assertSafeSvg, inspectSvg } from './quality';
 import { clampOptions } from './presets';
 import { sanitizeGeneratedSvg } from './sanitizeSvg';
 import type { VectorEngine, VectorResult, VectorizeOptions } from './types';
-import { validateRasterFile } from './validateInput';
+import { validateRasterFileSignature } from './validateInput';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
 
 const READY_TIMEOUT_MS = 15_000;
@@ -12,7 +12,7 @@ export class NeplexVectorEngine implements VectorEngine {
   readonly id = 'neplex-vtracer-wasm';
 
   async vectorize(file: File, options: VectorizeOptions): Promise<VectorResult> {
-    validateRasterFile(file);
+    await validateRasterFileSignature(file);
     const source = await file.arrayBuffer();
     const worker = new Worker(new URL('./vectorizer.worker.ts', import.meta.url), { type: 'module' });
 
