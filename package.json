@@ -11,16 +11,18 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@neplex/vectorizer": "^0.1.0",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "@neplex/vectorizer": "0.1.0",
+    "@neplex/vectorizer-wasm32-wasi": "0.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^5.0.2",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.3",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0",
     "vitest": "^3.2.4"
   }
 }
