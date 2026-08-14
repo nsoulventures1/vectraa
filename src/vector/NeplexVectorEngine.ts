@@ -1,5 +1,6 @@
 import { assertSafeSvg, inspectSvg } from './quality';
 import { clampOptions } from './presets';
+import { sanitizeGeneratedSvg } from './sanitizeSvg';
 import type { VectorEngine, VectorResult, VectorizeOptions } from './types';
 import { validateRasterFile } from './validateInput';
 import type { WorkerRequest, WorkerResponse } from './workerProtocol';
@@ -18,7 +19,7 @@ export class NeplexVectorEngine implements VectorEngine {
     try {
       await waitForReady(worker);
       const result = await runWorker(worker, source, clampOptions(options));
-      const svg = assertSafeSvg(result.svg);
+      const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
       return { svg, elapsedMs: result.elapsedMs, quality: inspectSvg(svg) };
     } finally {
       worker.terminate();
