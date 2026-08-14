@@ -8,6 +8,7 @@ import { preprocessLogoForRescue, recommendedLogoRescueOptions } from './vector/
 import { vectorizeBestOf } from './vector/multipass';
 import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
+import { assessPurpose, PURPOSES, type ProductionPurpose } from './vector/purpose';
 import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
 
 const engine = new NeplexVectorEngine();
@@ -20,6 +21,7 @@ export default function App() {
   const analysisRun = useRef(0);
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
+  const [purpose, setPurpose] = useState<ProductionPurpose>('general');
   const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [logoRescue, setLogoRescue] = useState(false);
@@ -35,6 +37,8 @@ export default function App() {
   const svgBlob = useMemo(() => result ? new Blob([result.svg], { type: 'image/svg+xml' }) : null, [result]);
   const svgUrl = useObjectUrl(svgBlob);
   const benchmark = useMemo(() => result ? assessVectorResult(result) : null, [result]);
+  const purposeProfile = PURPOSES.find((item) => item.id === purpose) ?? PURPOSES[0];
+  const purposeAssessment = useMemo(() => result ? assessPurpose(result.svg, purpose) : null, [result, purpose]);
 
   useEffect(() => {
     function onPaste(event: ClipboardEvent) {
@@ -45,12 +49,12 @@ export default function App() {
     }
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  });
+  }, []);
 
   async function choose(next?: File) {
     if (!next) return;
     const run = ++analysisRun.current;
-    setFile(next); setAnalysis(null); setAnalyzing(true); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setError(null); setZoom(1); setCompare(50);
+    setFile(next); setAnalysis(null); setAnalyzing(true); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setPurpose('general'); setError(null); setZoom(1); setCompare(50);
     try {
       const nextAnalysis = await analyzeImage(next);
       if (run !== analysisRun.current) return;
@@ -73,7 +77,8 @@ export default function App() {
 
   function download() {
     if (!result) return;
-    downloadSvg(result.svg, svgFilename(file?.name, logoRescue ? '-rescued' : ''));
+    const rescueSuffix = logoRescue ? '-rescued' : '';
+    downloadSvg(result.svg, svgFilename(file?.name, `${rescueSuffix}${purposeProfile.suffix}`));
   }
 
   return <main>
@@ -87,21 +92,16 @@ export default function App() {
 
     {(sourceUrl || svgUrl) && <section className="inspectionBar" aria-label="Preview controls"><span>Inspect</span><div className="zoomButtons">{[1, 2, 4].map((level) => <button key={level} className={zoom === level ? 'selected' : ''} onClick={() => setZoom(level)}>{level}×</button>)}</div>{result && <span className="hint">Use 4× to inspect edge smoothness and tracing detail.</span>}</section>}
 
-    {result && sourceUrl && svgUrl && <section className="comparison card" aria-label="Before and after comparison">
-      <div className="cardHead"><span>BEFORE / VECTOR COMPARISON</span><span className="score">{compare}% vector reveal</span></div>
-      <div className="compareCanvas checker">
-        <img src={sourceUrl} alt="Original comparison" />
-        <div className="vectorReveal" style={{ width: `${compare}%` }}><img src={svgUrl} alt="Vector comparison" /></div>
-        <div className="compareLine" style={{ left: `${compare}%` }} aria-hidden="true" />
-      </div>
-      <label className="compareControl"><span>Original</span><input aria-label="Compare original and vector" type="range" min="0" max="100" value={compare} onChange={(e) => setCompare(Number(e.target.value))} /><span>Vector</span></label>
-    </section>}
+    {result && sourceUrl && svgUrl && <section className="comparison card" aria-label="Before and after comparison"><div className="cardHead"><span>BEFORE / VECTOR COMPARISON</span><span className="score">{compare}% vector reveal</span></div><div className="compareCanvas checker"><img src={sourceUrl} alt="Original comparison" /><div className="vectorReveal" style={{ width: `${compare}%` }}><img src={svgUrl} alt="Vector comparison" /></div><div className="compareLine" style={{ left: `${compare}%` }} aria-hidden="true" /></div><label className="compareControl"><span>Original</span><input aria-label="Compare original and vector" type="range" min="0" max="100" value={compare} onChange={(e) => setCompare(Number(e.target.value))} /><span>Vector</span></label></section>}
 
     {file && <section className="analysisBar" aria-live="polite">{analyzing ? <span className="analysisLoading">Inspecting artwork locally…</span> : analysis && <><span className="analysisBadge">Recommended: <b>{PRESETS.find((item) => item.id === analysis.likelyKind)?.label}</b> · {analysis.confidence}% confidence</span><span>{analysis.width}×{analysis.height} · {analysis.megapixels.toFixed(1)} MP{analysis.hasAlpha ? ' · transparency detected' : ''}</span>{analysis.warnings[0] && <span className="analysisWarning">{analysis.warnings[0]}</span>}</>}</section>}
-    <section className="controls"><div><label>Optimize for {analysis ? '· automatically recommended, fully adjustable' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id && !logoRescue ? 'selected' : ''} onClick={() => { setPreset(item.id); setLogoRescue(false); }}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}{analysis?.likelyKind === 'logo' && <button className={logoRescue ? 'selected' : ''} onClick={() => setLogoRescue((value) => !value)}>Logo Rescue · clean poor JPG</button>}</div></div><div className="actions"><button className="primary" disabled={!file || running || analyzing} onClick={vectorize}>{running ? 'Finding best vector…' : analyzing ? 'Analyzing…' : logoRescue ? 'Rescue & Vectorize' : 'Make Best Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div></section>
+    <section className="controls"><div><label>Optimize tracing for {analysis ? '· automatically recommended, fully adjustable' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id && !logoRescue ? 'selected' : ''} onClick={() => { setPreset(item.id); setLogoRescue(false); }}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}{analysis?.likelyKind === 'logo' && <button className={logoRescue ? 'selected' : ''} onClick={() => setLogoRescue((value) => !value)}>Logo Rescue · clean poor JPG</button>}</div></div><div className="actions"><button className="primary" disabled={!file || running || analyzing} onClick={vectorize}>{running ? 'Finding best vector…' : analyzing ? 'Analyzing…' : logoRescue ? 'Rescue & Vectorize' : 'Make Best Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div></section>
     {logoRescue && <div className="analysisBar"><span className="analysisBadge"><b>Logo Rescue on</b> · local denoise, contrast cleanup, color simplification and near-white background removal before tracing</span></div>}
     {error && <div role="alert" className="error">{error}</div>}
     {result && benchmark && <section className="metrics" aria-label="Vector quality diagnostics">{fidelity && <span><b>{fidelity.score}/100</b> visual fidelity</span>}<span><b>{benchmark.overallScore}/100</b> vector health</span>{selectedPass && <span><b>{selectedPass}</b> winning pass · best of {passCount}</span>}<span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span></section>}
+
+    {result && <section className="purposePanel" aria-label="Prepare vector for intended use"><div className="purposeIntro"><span className="sectionKicker">PREPARE FOR USE</span><h2>What will you use this vector for?</h2><p>Vectraa checks the SVG for workflow-specific risks. These presets guide preparation; they do not replace vendor or machine-specific production checks.</p></div><div className="purposeGrid">{PURPOSES.map((item) => <button key={item.id} className={purpose === item.id ? 'purposeCard selected' : 'purposeCard'} onClick={() => setPurpose(item.id)}><strong>{item.label}</strong><span>{item.description}</span></button>)}</div><div className="purposeReport"><div><strong>{purposeProfile.label}</strong><span>{purposeProfile.description}</span></div>{purposeAssessment?.warnings.map((warning) => <p className="purposeWarning" key={warning}>⚠ {warning}</p>)}{purposeAssessment?.notes.map((note) => <p key={note}>✓ {note}</p>)}{purposeProfile.disclaimer && <p className="purposeDisclaimer">{purposeProfile.disclaimer}</p>}<button className="primary" onClick={download}>Download {purposeProfile.label} SVG</button></div></section>}
+
     <section className="trust"><div><b>01</b><strong>Local processing</strong><p>Your basic conversion runs on your device.</p></div><div><b>02</b><strong>Smart adaptive tracing</strong><p>Vectraa spends extra passes only when the quality data says they are useful.</p></div><div><b>03</b><strong>No account. No watermark.</strong><p>Convert and download without creating an account.</p></div></section>
   </main>;
 }
