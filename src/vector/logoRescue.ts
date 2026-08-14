@@ -36,10 +36,12 @@ export async function preprocessLogoForRescue(file: File, options: LogoRescueOpt
     context.drawImage(bitmap, 0, 0);
 
     const image = context.getImageData(0, 0, bitmap.width, bitmap.height);
-    let data = image.data;
-    if (options.denoiseStrength > 0) {
-      data = boxDenoise(data, bitmap.width, bitmap.height, options.denoiseStrength);
-    }
+    const source = new Uint8ClampedArray(new ArrayBuffer(image.data.length));
+    source.set(image.data);
+    const data = options.denoiseStrength > 0
+      ? boxDenoise(source, bitmap.width, bitmap.height, options.denoiseStrength)
+      : source;
+
     applyContrastAndQuantization(data, options);
 
     const rendered = new ImageData(bitmap.width, bitmap.height);
@@ -61,7 +63,7 @@ export function quantizeChannel(value: number, levels: number): number {
   return Math.max(0, Math.min(255, Math.round(Math.round(value / step) * step)));
 }
 
-function applyContrastAndQuantization(data: Uint8ClampedArray, options: LogoRescueOptions): void {
+function applyContrastAndQuantization(data: Uint8ClampedArray<ArrayBuffer>, options: LogoRescueOptions): void {
   const contrast = Math.max(-0.5, Math.min(0.5, options.contrastBoost));
   const factor = (259 * (contrast * 255 + 255)) / (255 * (259 - contrast * 255));
 
@@ -85,14 +87,14 @@ function applyContrastAndQuantization(data: Uint8ClampedArray, options: LogoResc
   }
 }
 
-function boxDenoise(source: Uint8ClampedArray, width: number, height: number, radius: number): Uint8ClampedArray {
+function boxDenoise(source: Uint8ClampedArray<ArrayBuffer>, width: number, height: number, radius: number): Uint8ClampedArray<ArrayBuffer> {
   const safeRadius = Math.max(1, Math.min(2, Math.round(radius)));
-  const output = new Uint8ClampedArray(source.length);
+  const output = new Uint8ClampedArray(new ArrayBuffer(source.length));
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = (y * width + x) * 4;
       if (source[index + 3] < 8) {
-        output.set(source.slice(index, index + 4), index);
+        output.set(source.subarray(index, index + 4), index);
         continue;
       }
       let r = 0, g = 0, b = 0, a = 0, samples = 0;
