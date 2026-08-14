@@ -41,9 +41,10 @@ export async function preprocessLogoForRescue(file: File, options: LogoRescueOpt
       data = boxDenoise(data, bitmap.width, bitmap.height, options.denoiseStrength);
     }
     applyContrastAndQuantization(data, options);
-    const ownedPixels = new Uint8ClampedArray(data.length);
-    ownedPixels.set(data);
-    context.putImageData(new ImageData(ownedPixels, bitmap.width, bitmap.height), 0, 0);
+
+    const rendered = new ImageData(bitmap.width, bitmap.height);
+    rendered.data.set(data);
+    context.putImageData(rendered, 0, 0);
 
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Vectraa could not create the cleaned logo.')), 'image/png');
