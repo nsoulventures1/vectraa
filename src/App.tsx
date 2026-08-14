@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { useObjectUrl } from './hooks/useObjectUrl';
+import { analyzeImage } from './vector/analyzeImage';
 import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
-import type { VectorPreset, VectorResult } from './vector/types';
+import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
 
 const engine = new NeplexVectorEngine();
 const PRESETS: Array<{ id: VectorPreset; label: string }> = [
@@ -15,8 +16,11 @@ const PRESETS: Array<{ id: VectorPreset; label: string }> = [
 
 export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const analysisRun = useRef(0);
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
+  const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState<VectorResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -24,11 +28,25 @@ export default function App() {
   const svgBlob = useMemo(() => result ? new Blob([result.svg], { type: 'image/svg+xml' }) : null, [result]);
   const svgUrl = useObjectUrl(svgBlob);
 
-  function choose(next?: File) {
+  async function choose(next?: File) {
     if (!next) return;
+    const run = ++analysisRun.current;
     setFile(next);
+    setAnalysis(null);
+    setAnalyzing(true);
     setResult(null);
     setError(null);
+    try {
+      const nextAnalysis = await analyzeImage(next);
+      if (run !== analysisRun.current) return;
+      setAnalysis(nextAnalysis);
+      setPreset(nextAnalysis.likelyKind);
+    } catch (err) {
+      if (run !== analysisRun.current) return;
+      setError(err instanceof Error ? err.message : 'Image analysis failed.');
+    } finally {
+      if (run === analysisRun.current) setAnalyzing(false);
+    }
   }
 
   async function vectorize() {
@@ -65,8 +83,8 @@ export default function App() {
     </section>
 
     <section className="studio">
-      <input ref={inputRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { choose(e.target.files?.[0]); e.currentTarget.value = ''; }} />
-      <div className="source card" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); choose(e.dataTransfer.files[0]); }}>
+      <input ref={inputRef} hidden type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { void choose(e.target.files?.[0]); e.currentTarget.value = ''; }} />
+      <div className="source card" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); void choose(e.dataTransfer.files[0]); }}>
         <div className="cardHead"><span>ORIGINAL</span>{file && <button onClick={() => inputRef.current?.click()}>Replace</button>}</div>
         {sourceUrl ? <div className="canvas checker"><img src={sourceUrl} alt="Uploaded original" /></div> : <button className="drop" onClick={() => inputRef.current?.click()}><span className="uploadIcon">↑</span><strong>Drop your image here</strong><small>or click to browse · JPG, PNG, WebP · up to 20 MB</small></button>}
       </div>
@@ -76,9 +94,17 @@ export default function App() {
       </div>
     </section>
 
+    {file && <section className="analysisBar" aria-live="polite">
+      {analyzing ? <span className="analysisLoading">Inspecting artwork locally…</span> : analysis && <>
+        <span className="analysisBadge">Recommended: <b>{PRESETS.find((item) => item.id === analysis.likelyKind)?.label}</b> · {analysis.confidence}% confidence</span>
+        <span>{analysis.width}×{analysis.height} · {analysis.megapixels.toFixed(1)} MP{analysis.hasAlpha ? ' · transparency detected' : ''}</span>
+        {analysis.warnings[0] && <span className="analysisWarning">{analysis.warnings[0]}</span>}
+      </>}
+    </section>}
+
     <section className="controls">
-      <div><label>Optimize for</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id ? 'selected' : ''} onClick={() => setPreset(item.id)}>{item.label}</button>)}</div></div>
-      <div className="actions"><button className="primary" disabled={!file || running} onClick={vectorize}>{running ? 'Vectorizing…' : 'Make Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div>
+      <div><label>Optimize for {analysis ? '· automatically recommended, fully adjustable' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id ? 'selected' : ''} onClick={() => setPreset(item.id)}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}</div></div>
+      <div className="actions"><button className="primary" disabled={!file || running || analyzing} onClick={vectorize}>{running ? 'Vectorizing…' : analyzing ? 'Analyzing…' : 'Make Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div>
     </section>
 
     {error && <div role="alert" className="error">{error}</div>}
