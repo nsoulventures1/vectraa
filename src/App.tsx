@@ -10,6 +10,7 @@ import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
 import { assessPurpose, PURPOSES, type ProductionPurpose } from './vector/purpose';
 import { purposeLabel, recommendVectorWorkflow, type VectorRecommendation } from './vector/recommendation';
+import { RunGuard } from './vector/runGuard';
 import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
 
 const engine = new NeplexVectorEngine();
@@ -19,7 +20,8 @@ const PRESETS: Array<{ id: VectorPreset; label: string }> = [
 
 export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
-  const analysisRun = useRef(0);
+  const analysisRun = useRef(new RunGuard());
+  const conversionRun = useRef(new RunGuard());
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
   const [purpose, setPurpose] = useState<ProductionPurpose>('general');
@@ -46,8 +48,7 @@ export default function App() {
     function onPaste(event: ClipboardEvent) {
       const image = Array.from(event.clipboardData?.files ?? []).find((item) => item.type.startsWith('image/'));
       if (!image) return;
-      event.preventDefault();
-      void choose(image);
+      event.preventDefault(); void choose(image);
     }
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
@@ -55,27 +56,33 @@ export default function App() {
 
   async function choose(next?: File) {
     if (!next) return;
-    const run = ++analysisRun.current;
-    setFile(next); setAnalysis(null); setRecommendation(null); setAnalyzing(true); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setPurpose('general'); setError(null); setZoom(1); setCompare(50);
+    const run = analysisRun.current.next();
+    conversionRun.current.invalidate();
+    setFile(next); setAnalysis(null); setRecommendation(null); setAnalyzing(true); setRunning(false); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setPurpose('general'); setError(null); setZoom(1); setCompare(50);
     try {
       const nextAnalysis = await analyzeImage(next);
-      if (run !== analysisRun.current) return;
+      if (!analysisRun.current.isCurrent(run)) return;
       const nextRecommendation = recommendVectorWorkflow(nextAnalysis);
       setAnalysis(nextAnalysis); setRecommendation(nextRecommendation); setPreset(nextRecommendation.preset); setPurpose(nextRecommendation.purpose); setLogoRescue(nextRecommendation.logoRescue);
-    } catch (err) { if (run === analysisRun.current) setError(err instanceof Error ? err.message : 'Image analysis failed.'); }
-    finally { if (run === analysisRun.current) setAnalyzing(false); }
+    } catch (err) { if (analysisRun.current.isCurrent(run)) setError(err instanceof Error ? err.message : 'Image analysis failed.'); }
+    finally { if (analysisRun.current.isCurrent(run)) setAnalyzing(false); }
   }
 
   async function vectorize() {
     if (!file || running) return;
+    const run = conversionRun.current.next();
+    const sourceFile = file;
     setRunning(true); setError(null); setFidelity(null); setSelectedPass(null);
     try {
-      const processingFile = logoRescue && analysis ? await preprocessLogoForRescue(file, recommendedLogoRescueOptions(analysis)) : file;
+      const processingFile = logoRescue && analysis ? await preprocessLogoForRescue(sourceFile, recommendedLogoRescueOptions(analysis)) : sourceFile;
+      if (!conversionRun.current.isCurrent(run)) return;
       const base = logoRescue ? { ...DEFAULT_OPTIONS.logo, transparentBackground: true } : DEFAULT_OPTIONS[preset];
       const multi = await vectorizeBestOf(engine, processingFile, base, 3);
+      if (!conversionRun.current.isCurrent(run)) return;
       setResult(multi.best.result); setFidelity(multi.best.fidelity); setSelectedPass(multi.best.id); setPassCount(multi.candidates.length);
-    } catch (err) { setResult(null); setError(err instanceof Error ? err.message : 'Vectorization failed.'); }
-    finally { setRunning(false); }
+    } catch (err) {
+      if (conversionRun.current.isCurrent(run)) { setResult(null); setError(err instanceof Error ? err.message : 'Vectorization failed.'); }
+    } finally { if (conversionRun.current.isCurrent(run)) setRunning(false); }
   }
 
   function download() {
