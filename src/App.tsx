@@ -92,7 +92,7 @@ export default function App() {
         preset,
         purpose,
         qualityScore: multi.best.result.quality.score,
-        fidelityScore: multi.best.fidelity.score,
+        fidelityScore: multi.best.fidelity?.score,
         paths: multi.best.result.quality.paths,
         bytes: multi.best.result.quality.bytes,
       })));
