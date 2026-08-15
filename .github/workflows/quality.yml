@@ -11,7 +11,7 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,7 +23,7 @@ jobs:
           npm install --no-save @rollup/rollup-linux-x64-gnu --no-audit --no-fund
         env:
           npm_config_cpu: wasm32
-      - name: Run tests
+      - name: Run unit tests
         run: npm test
       - name: Build production site
         run: npm run build
@@ -46,10 +46,22 @@ jobs:
             exit 1
           fi
           echo "Deployable bundle size: $(du -sh dist | cut -f1)"
+      - name: Install Chromium for production smoke test
+        run: npx playwright install --with-deps chromium
+      - name: Smoke test production converter
+        run: npm run test:e2e
       - name: Preserve deployable bundle
         uses: actions/upload-artifact@v4
         with:
           name: vectraa-dist
           path: dist
           if-no-files-found: error
+          retention-days: 7
+      - name: Preserve browser trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: test-results
+          if-no-files-found: ignore
           retention-days: 7
