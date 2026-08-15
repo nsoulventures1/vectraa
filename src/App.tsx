@@ -9,6 +9,7 @@ import { vectorizeBestOf } from './vector/multipass';
 import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
 import { assessPurpose, PURPOSES, type ProductionPurpose } from './vector/purpose';
+import { purposeLabel, recommendVectorWorkflow, type VectorRecommendation } from './vector/recommendation';
 import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
 
 const engine = new NeplexVectorEngine();
@@ -22,6 +23,7 @@ export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
   const [purpose, setPurpose] = useState<ProductionPurpose>('general');
+  const [recommendation, setRecommendation] = useState<VectorRecommendation | null>(null);
   const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [logoRescue, setLogoRescue] = useState(false);
@@ -54,11 +56,16 @@ export default function App() {
   async function choose(next?: File) {
     if (!next) return;
     const run = ++analysisRun.current;
-    setFile(next); setAnalysis(null); setAnalyzing(true); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setPurpose('general'); setError(null); setZoom(1); setCompare(50);
+    setFile(next); setAnalysis(null); setRecommendation(null); setAnalyzing(true); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setPurpose('general'); setError(null); setZoom(1); setCompare(50);
     try {
       const nextAnalysis = await analyzeImage(next);
       if (run !== analysisRun.current) return;
-      setAnalysis(nextAnalysis); setPreset(nextAnalysis.likelyKind);
+      const nextRecommendation = recommendVectorWorkflow(nextAnalysis);
+      setAnalysis(nextAnalysis);
+      setRecommendation(nextRecommendation);
+      setPreset(nextRecommendation.preset);
+      setPurpose(nextRecommendation.purpose);
+      setLogoRescue(nextRecommendation.logoRescue);
     } catch (err) { if (run === analysisRun.current) setError(err instanceof Error ? err.message : 'Image analysis failed.'); }
     finally { if (run === analysisRun.current) setAnalyzing(false); }
   }
@@ -95,7 +102,8 @@ export default function App() {
     {result && sourceUrl && svgUrl && <section className="comparison card" aria-label="Before and after comparison"><div className="cardHead"><span>BEFORE / VECTOR COMPARISON</span><span className="score">{compare}% vector reveal</span></div><div className="compareCanvas checker"><img src={sourceUrl} alt="Original comparison" /><div className="vectorReveal" style={{ width: `${compare}%` }}><img src={svgUrl} alt="Vector comparison" /></div><div className="compareLine" style={{ left: `${compare}%` }} aria-hidden="true" /></div><label className="compareControl"><span>Original</span><input aria-label="Compare original and vector" type="range" min="0" max="100" value={compare} onChange={(e) => setCompare(Number(e.target.value))} /><span>Vector</span></label></section>}
 
     {file && <section className="analysisBar" aria-live="polite">{analyzing ? <span className="analysisLoading">Inspecting artwork locally…</span> : analysis && <><span className="analysisBadge">Recommended: <b>{PRESETS.find((item) => item.id === analysis.likelyKind)?.label}</b> · {analysis.confidence}% confidence</span><span>{analysis.width}×{analysis.height} · {analysis.megapixels.toFixed(1)} MP{analysis.hasAlpha ? ' · transparency detected' : ''}</span>{analysis.warnings[0] && <span className="analysisWarning">{analysis.warnings[0]}</span>}</>}</section>}
-    <section className="controls"><div><label>Optimize tracing for {analysis ? '· automatically recommended, fully adjustable' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id && !logoRescue ? 'selected' : ''} onClick={() => { setPreset(item.id); setLogoRescue(false); }}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}{analysis?.likelyKind === 'logo' && <button className={logoRescue ? 'selected' : ''} onClick={() => setLogoRescue((value) => !value)}>Logo Rescue · clean poor JPG</button>}</div></div><div className="actions"><button className="primary" disabled={!file || running || analyzing} onClick={vectorize}>{running ? 'Finding best vector…' : analyzing ? 'Analyzing…' : logoRescue ? 'Rescue & Vectorize' : 'Make Best Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div></section>
+    {recommendation && <section className="analysisBar" aria-label="Automatic workflow recommendation"><span className="analysisBadge"><b>Smart setup applied:</b> {PRESETS.find((item) => item.id === recommendation.preset)?.label} tracing · {purposeLabel(recommendation.purpose)}{recommendation.logoRescue ? ' · Logo Rescue' : ''}</span>{recommendation.reasons.map((reason) => <span key={reason}>{reason}</span>)}</section>}
+    <section className="controls"><div><label>Optimize tracing for {analysis ? '· smart setup applied, fully adjustable' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id && !logoRescue ? 'selected' : ''} onClick={() => { setPreset(item.id); setLogoRescue(false); }}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}{analysis?.likelyKind === 'logo' && <button className={logoRescue ? 'selected' : ''} onClick={() => setLogoRescue((value) => !value)}>Logo Rescue · clean poor JPG</button>}</div></div><div className="actions"><button className="primary" disabled={!file || running || analyzing} onClick={vectorize}>{running ? 'Finding best vector…' : analyzing ? 'Analyzing…' : logoRescue ? 'Rescue & Vectorize' : 'Make Best Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div></section>
     {logoRescue && <div className="analysisBar"><span className="analysisBadge"><b>Logo Rescue on</b> · local denoise, contrast cleanup, color simplification and near-white background removal before tracing</span></div>}
     {error && <div role="alert" className="error">{error}</div>}
     {result && benchmark && <section className="metrics" aria-label="Vector quality diagnostics">{fidelity && <span><b>{fidelity.score}/100</b> visual fidelity</span>}<span><b>{benchmark.overallScore}/100</b> vector health</span>{selectedPass && <span><b>{selectedPass}</b> winning pass · best of {passCount}</span>}<span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span></section>}
