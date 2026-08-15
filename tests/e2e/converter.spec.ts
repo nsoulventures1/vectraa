@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-const tinyPng = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR42mP8z8DAwMAAAAYAAWgmWQ0AAAAASUVORK5CYII=',
+const smokePng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAiUlEQVR4nGP8////f4YBBEwDafmoAxgYGBhY0AXko7fS1MKHS71R+AMeAqMOGHUARi4gFqCnZnJzD8kOQLcYXZxUh5AUBbgsJ1UN2Q6gBSDaAaT4jBS1QycERh1ASvYiRe3QCQEGBuJ8RmpBRHJJCLNgwIpiSi1EB0MrDYw6YFg6gHG0bzjiHQAA1OkkcCKX3TgAAAAASUVORK5CYII=',
   'base64',
 );
 
@@ -12,7 +12,7 @@ test('production converter loads, accepts artwork, vectorizes, and exposes SVG d
   await expect(page.getByText(/processed on your device/i)).toBeVisible();
 
   const input = page.locator('input[type="file"]');
-  await input.setInputFiles({ name: 'smoke.png', mimeType: 'image/png', buffer: tinyPng });
+  await input.setInputFiles({ name: 'smoke.png', mimeType: 'image/png', buffer: smokePng });
 
   await expect(page.getByText(/Recommended:/)).toBeVisible();
   const convert = page.getByRole('button', { name: /Make Best Vector|Rescue & Vectorize/ });
