@@ -20,7 +20,9 @@ test('production converter loads, accepts artwork, vectorizes, and exposes SVG d
   await convert.click();
 
   await expect(page.getByAltText('Vectorized result')).toBeVisible({ timeout: 45_000 });
-  await expect(page.getByText(/vector health/i)).toBeVisible();
+  const diagnostics = page.locator('.metrics');
+  await expect(diagnostics).toBeVisible();
+  await expect(diagnostics.getByText(/vector health/i)).toBeVisible();
   await expect(page.getByRole('button', { name: /^Download SVG$/ })).toBeEnabled();
   await expect(page.getByText(/Real SVG paths/i)).toBeHidden();
 });
