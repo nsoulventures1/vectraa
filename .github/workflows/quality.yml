@@ -23,5 +23,33 @@ jobs:
           npm install --no-save @rollup/rollup-linux-x64-gnu --no-audit --no-fund
         env:
           npm_config_cpu: wasm32
-      - run: npm test
-      - run: npm run build
+      - name: Run tests
+        run: npm test
+      - name: Build production site
+        run: npm run build
+      - name: Validate deployment bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          test -f dist/_headers
+          test -f dist/robots.txt
+          test -f dist/site.webmanifest
+          test -d dist/assets
+          find dist/assets -type f | grep -q .
+          grep -q 'Vectraa' dist/index.html
+          grep -q 'Content-Security-Policy' dist/_headers
+          grep -q 'User-agent:' dist/robots.txt
+          grep -q '"name": "Vectraa' dist/site.webmanifest
+          if find dist -type f -name '*.map' | grep -q .; then
+            echo 'Unexpected source maps found in production bundle.' >&2
+            exit 1
+          fi
+          echo "Deployable bundle size: $(du -sh dist | cut -f1)"
+      - name: Preserve deployable bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectraa-dist
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
