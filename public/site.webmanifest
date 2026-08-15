@@ -1,0 +1,11 @@
+{
+  "name": "Vectraa — AI Vector Studio",
+  "short_name": "Vectraa",
+  "description": "Private browser-based JPG, PNG and WebP to genuine SVG vector conversion.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f8f5",
+  "theme_color": "#f7f8f5",
+  "categories": ["design", "graphics", "productivity"]
+}
