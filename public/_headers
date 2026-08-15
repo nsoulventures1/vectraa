@@ -13,3 +13,9 @@
 
 /index.html
   Cache-Control: no-cache
+
+https://vectraa.pages.dev/*
+  X-Robots-Tag: noindex
+
+https://:version.vectraa.pages.dev/*
+  X-Robots-Tag: noindex
