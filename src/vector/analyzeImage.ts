@@ -37,7 +37,7 @@ export async function analyzeImage(file: File): Promise<ImageAnalysis> {
 
     const megapixels = (bitmap.width * bitmap.height) / 1_000_000;
     if (megapixels > 12) warnings.push('Large source image; conversion may take longer.');
-    if (signals.colorComplexity > 0.8) warnings.push('Many color transitions detected; expect a larger SVG.');
+    if (signals.colorComplexity > 0.8) warnings.push('Many foreground color transitions detected; expect a larger SVG.');
     if (signals.edgeDensity > 0.42) warnings.push('Very dense detail detected; some simplification may improve editability.');
 
     return {
@@ -64,23 +64,34 @@ export function classifyImageSignals(signals: ImageSignals): VectorPreset {
   const { edgeDensity, colorComplexity, lightBackground, darkInk, saturation, alphaCoverage } = signals;
 
   const signatureLike =
-    lightBackground > 0.68 &&
-    darkInk > 0.015 && darkInk < 0.32 &&
-    colorComplexity < 0.22 &&
-    edgeDensity < 0.23;
+    lightBackground > 0.72 &&
+    darkInk > 0.01 && darkInk < 0.28 &&
+    colorComplexity < 0.2 &&
+    edgeDensity < 0.2 &&
+    saturation < 0.18;
   if (signatureLike) return 'signature';
 
   const lineArtLike =
-    colorComplexity < 0.28 &&
-    edgeDensity >= 0.16 &&
-    (lightBackground > 0.5 || alphaCoverage > 0.08) &&
-    saturation < 0.26;
+    colorComplexity < 0.24 &&
+    edgeDensity >= 0.15 &&
+    (lightBackground > 0.52 || alphaCoverage > 0.08) &&
+    saturation < 0.22;
   if (lineArtLike) return 'line-art';
 
+  // JPEG logos/stamps often look artificially "complex" because anti-aliasing and
+  // compression create many near-white shades. A dominant light background plus a
+  // relatively small saturated/dark foreground is a much stronger logo signal.
+  const lightBackgroundBrandArt =
+    lightBackground > 0.5 &&
+    edgeDensity < 0.36 &&
+    darkInk < 0.38 &&
+    (saturation > 0.06 || colorComplexity < 0.5);
+
   const logoLike =
-    colorComplexity < 0.42 &&
-    edgeDensity < 0.30 &&
-    (saturation > 0.08 || alphaCoverage > 0.04 || lightBackground > 0.35);
+    lightBackgroundBrandArt ||
+    (colorComplexity < 0.42 &&
+      edgeDensity < 0.3 &&
+      (saturation > 0.08 || alphaCoverage > 0.04 || lightBackground > 0.35));
   if (logoLike) return 'logo';
 
   if (colorComplexity > 0.72 || edgeDensity > 0.38) return 'high-detail';
@@ -89,11 +100,11 @@ export function classifyImageSignals(signals: ImageSignals): VectorPreset {
 
 export function recommendationConfidence(signals: ImageSignals, preset: VectorPreset): number {
   const margin = preset === 'signature'
-    ? (signals.lightBackground - 0.68) + (0.23 - signals.edgeDensity) + (0.22 - signals.colorComplexity)
+    ? (signals.lightBackground - 0.72) + (0.2 - signals.edgeDensity) + (0.2 - signals.colorComplexity)
     : preset === 'line-art'
-      ? (signals.edgeDensity - 0.16) + (0.28 - signals.colorComplexity)
+      ? (signals.edgeDensity - 0.15) + (0.24 - signals.colorComplexity)
       : preset === 'logo'
-        ? (0.42 - signals.colorComplexity) + (0.30 - signals.edgeDensity)
+        ? Math.max((0.42 - signals.colorComplexity) + (0.3 - signals.edgeDensity), (signals.lightBackground - 0.5) + (0.36 - signals.edgeDensity))
         : preset === 'high-detail'
           ? Math.max(signals.colorComplexity - 0.72, signals.edgeDensity - 0.38) * 2
           : 0.22;
@@ -107,13 +118,14 @@ function measureSignals(
   width: number,
   height: number,
 ): ImageSignals {
-  const bins = new Set<number>();
+  const foregroundBins = new Set<number>();
   const gray = new Uint8Array(sampleWidth * sampleHeight);
   let transparent = 0;
   let visible = 0;
   let light = 0;
   let dark = 0;
   let saturated = 0;
+  let foreground = 0;
 
   for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
     const r = pixels[i];
@@ -131,7 +143,14 @@ function measureSignals(
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     if (max - min > 55) saturated += 1;
-    bins.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
+
+    // Ignore the near-white page/background when estimating artwork complexity.
+    // Also use coarser 3-bit channel bins so JPEG anti-alias shades do not make a
+    // one/two-color logo look like a photograph.
+    if (luminance < 232 || max - min > 28) {
+      foreground += 1;
+      foregroundBins.add(((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5));
+    }
   }
 
   let edgeCount = 0;
@@ -148,13 +167,16 @@ function measureSignals(
 
   const total = sampleWidth * sampleHeight;
   const visibleSafe = Math.max(1, visible);
+  const foregroundSafe = Math.max(1, foreground);
+  const paletteDensity = foregroundBins.size / Math.max(12, Math.min(64, Math.sqrt(foregroundSafe) * 1.8));
+
   return {
     width,
     height,
     hasAlpha: transparent > 0,
     alphaCoverage: transparent / total,
     edgeDensity: comparisons ? edgeCount / comparisons : 0,
-    colorComplexity: Math.min(1, bins.size / 96),
+    colorComplexity: Math.min(1, paletteDensity),
     lightBackground: light / visibleSafe,
     darkInk: dark / visibleSafe,
     saturation: saturated / visibleSafe,
