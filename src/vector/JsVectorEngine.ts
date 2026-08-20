@@ -6,7 +6,8 @@ import type { VectorEngine, VectorResult, VectorizeOptions } from './types';
 import { validateRasterFileSignature } from './validateInput';
 
 interface Rgb { r: number; g: number; b: number }
-interface PreparedImage { imageData: ImageData; traceScale: number }
+interface ReconstructedArtwork { imageData: ImageData; palette: Rgb[] }
+interface PreparedImage { imageData: ImageData; traceScale: number; traceColors: number }
 
 export class JsVectorEngine implements VectorEngine {
   readonly id = 'imagetracer-js';
@@ -18,9 +19,12 @@ export class JsVectorEngine implements VectorEngine {
     const decoded = await decodeImage(file);
     const prepared = isFlatArtwork(options)
       ? prepareFlatArtwork(decoded, options)
-      : { imageData: decoded, traceScale: 1 };
+      : { imageData: decoded, traceScale: 1, traceColors: options.colors };
 
-    const svgRaw = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale));
+    const svgRaw = ImageTracer.imagedataToSVG(
+      prepared.imageData,
+      toTraceOptions(options, prepared.traceScale, prepared.traceColors),
+    );
     const svg = assertSafeSvg(sanitizeGeneratedSvg(svgRaw));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
   }
@@ -53,24 +57,22 @@ function isFlatArtwork(options: VectorizeOptions): boolean {
 
 function prepareFlatArtwork(input: ImageData, options: VectorizeOptions): PreparedImage {
   const reconstructed = reconstructFlatArtwork(input, options);
-  // Low-resolution logos are where ordinary tracers become visibly polygonal.
-  // Trace a high-quality supersampled mask, then scale vector coordinates back to
-  // the source size. This gives the curve fitter 3–4x more edge samples without
-  // inventing extra colours or pixel noise.
   const longest = Math.max(input.width, input.height);
   const factor = longest <= 700 ? 4 : longest <= 1400 ? 3 : 2;
   return {
-    imageData: supersampleFlatArtwork(reconstructed, factor, options),
+    imageData: supersampleFlatArtwork(reconstructed.imageData, reconstructed.palette, factor, options),
     traceScale: 1 / factor,
+    // ImageTracer counts transparent/background handling separately in some paths;
+    // leave one spare slot while keeping the palette tightly bounded.
+    traceColors: Math.max(2, Math.min(5, reconstructed.palette.length + 1)),
   };
 }
 
 /**
- * Converts noisy raster brand art into a small set of intentional flat colours
- * before path tracing. This deliberately removes page/background shades and JPEG
- * anti-alias colours instead of asking the tracer to vectorize every pixel shade.
+ * Reconstructs intentional flat artwork before tracing. The critical distinction is
+ * between real brand colours (for example navy + gold) and JPEG/antialias shades.
  */
-function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): ImageData {
+function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): ReconstructedArtwork {
   const { width, height } = input;
   const source = input.data;
   const background = estimateBackground(source, width, height);
@@ -85,18 +87,19 @@ function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): Im
     if (a < 16) continue;
     const pixel = { r: source[i], g: source[i + 1], b: source[i + 2] };
     const distance = colorDistance(pixel, background);
-    const chroma = Math.max(pixel.r, pixel.g, pixel.b) - Math.min(pixel.r, pixel.g, pixel.b);
+    const chromaValue = chroma(pixel);
     const luminanceValue = luminance(pixel);
-    const foreground = distance >= distanceThreshold || (chroma >= 38 && luminanceValue < 246);
+    const foreground = distance >= distanceThreshold || (chromaValue >= 38 && luminanceValue < 246);
     if (!foreground) continue;
     foregroundMask[p] = 1;
-    if (distance >= strongThreshold || chroma >= 54) strongPixels.push(pixel);
+    if (distance >= strongThreshold || chromaValue >= 54) strongPixels.push(pixel);
   }
 
   cleanMask(foregroundMask, width, height);
 
-  const requestedPalette = options.preset === 'logo' ? Math.min(4, Math.max(1, options.colors)) : 1;
-  const palette = buildPalette(strongPixels, requestedPalette);
+  const palette = options.preset === 'logo'
+    ? buildAdaptiveBrandPalette(strongPixels, 4)
+    : buildAdaptiveBrandPalette(strongPixels, 1);
   if (palette.length === 0) palette.push({ r: 32, g: 52, b: 96 });
 
   const output = new ImageData(width, height);
@@ -111,10 +114,77 @@ function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): Im
     data[i] = nearest.r; data[i + 1] = nearest.g; data[i + 2] = nearest.b; data[i + 3] = 255;
   }
 
-  return output;
+  return { imageData: output, palette };
 }
 
-function supersampleFlatArtwork(source: ImageData, factor: number, options: VectorizeOptions): ImageData {
+/**
+ * Finds a small set of perceptually distinct, statistically meaningful foreground
+ * colours. Large nearby JPEG shade clusters collapse together, while a smaller but
+ * genuinely different accent colour can survive if it occupies enough artwork.
+ */
+function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
+  if (pixels.length === 0) return [];
+  if (maxColors <= 1) return [robustMean(pixels)];
+
+  interface Bin { color: Rgb; count: number }
+  const bins = new Map<number, { r: number; g: number; b: number; count: number }>();
+  const step = Math.max(1, Math.floor(pixels.length / 30000));
+
+  for (let index = 0; index < pixels.length; index += step) {
+    const pixel = pixels[index];
+    // 4-bit/channel bins suppress compression shades but retain genuine brand hues.
+    const key = ((pixel.r >> 4) << 8) | ((pixel.g >> 4) << 4) | (pixel.b >> 4);
+    const bin = bins.get(key) ?? { r: 0, g: 0, b: 0, count: 0 };
+    bin.r += pixel.r; bin.g += pixel.g; bin.b += pixel.b; bin.count += 1;
+    bins.set(key, bin);
+  }
+
+  const candidates: Bin[] = [...bins.values()]
+    .map((bin) => ({
+      count: bin.count,
+      color: {
+        r: Math.round(bin.r / bin.count),
+        g: Math.round(bin.g / bin.count),
+        b: Math.round(bin.b / bin.count),
+      },
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const sampledCount = candidates.reduce((sum, item) => sum + item.count, 0);
+  if (!candidates.length) return [];
+
+  const selected: Rgb[] = [candidates[0].color];
+  const minimumShare = 0.008; // keep legitimate small accent colours (≈0.8% of ink)
+  const minimumDistance = 62;
+
+  while (selected.length < maxColors) {
+    let best: Bin | undefined;
+    let bestScore = 0;
+    for (const candidate of candidates) {
+      const share = candidate.count / Math.max(1, sampledCount);
+      if (share < minimumShare) continue;
+      const minDistance = Math.min(...selected.map((color) => colorDistance(candidate.color, color)));
+      if (minDistance < minimumDistance) continue;
+      const saturationBonus = 1 + chroma(candidate.color) / 180;
+      const distanceBonus = Math.pow(Math.min(1.8, minDistance / 100), 1.4);
+      const score = candidate.count * saturationBonus * distanceBonus;
+      if (score > bestScore) { best = candidate; bestScore = score; }
+    }
+    if (!best) break;
+    selected.push(best.color);
+  }
+
+  // Refine each selected colour with all nearby source pixels, using medians so
+  // anti-aliased edge pixels cannot drag brand colours toward grey/white.
+  const buckets = selected.map(() => [] as Rgb[]);
+  for (let index = 0; index < pixels.length; index += step) {
+    const pixel = pixels[index];
+    buckets[nearestIndex(pixel, selected)].push(pixel);
+  }
+  return selected.map((color, index) => buckets[index].length ? robustMean(buckets[index]) : color);
+}
+
+function supersampleFlatArtwork(source: ImageData, palette: Rgb[], factor: number, options: VectorizeOptions): ImageData {
   if (factor <= 1) return source;
 
   const base = document.createElement('canvas');
@@ -132,23 +202,21 @@ function supersampleFlatArtwork(source: ImageData, factor: number, options: Vect
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  // A tiny blur after bicubic-style canvas interpolation rounds stair-step edges,
-  // especially circular seals. It is deliberately weaker for signatures so thin
-  // pen strokes are not swallowed.
-  context.filter = options.preset === 'signature' ? 'blur(0.35px)' : 'blur(0.55px)';
+  context.filter = options.preset === 'signature' ? 'blur(0.28px)' : 'blur(0.42px)';
   context.drawImage(base, 0, 0, canvas.width, canvas.height);
   context.filter = 'none';
 
   const enlarged = context.getImageData(0, 0, canvas.width, canvas.height);
   const data = enlarged.data;
-  // Convert interpolation halos back to hard vector-ready coverage while retaining
-  // subpixel edge placement from supersampling.
-  const alphaFloor = options.preset === 'signature' ? 82 : 96;
+  const alphaFloor = options.preset === 'signature' ? 78 : 92;
   for (let i = 0; i < data.length; i += 4) {
     if (data[i + 3] < alphaFloor) {
       data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = 0;
     } else {
-      data[i + 3] = 255;
+      // Crucial: resampling must improve geometry only, not invent intermediate
+      // colours. Snap every visible supersampled pixel back to a detected brand ink.
+      const nearest = nearestColor({ r: data[i], g: data[i + 1], b: data[i + 2] }, palette);
+      data[i] = nearest.r; data[i + 1] = nearest.g; data[i + 2] = nearest.b; data[i + 3] = 255;
     }
   }
   return enlarged;
@@ -228,37 +296,6 @@ function removeTinyComponents(mask: Uint8Array, width: number, height: number, m
   }
 }
 
-function buildPalette(pixels: Rgb[], requested: number): Rgb[] {
-  if (pixels.length === 0) return [];
-  const sampleStep = Math.max(1, Math.floor(pixels.length / 5000));
-  const sampled = pixels.filter((_, index) => index % sampleStep === 0);
-  if (requested <= 1) return [robustMean(sampled)];
-
-  const luminanceSorted = sampled.slice().sort((a, b) => luminance(a) - luminance(b));
-  let centres: Rgb[] = [];
-  for (let k = 0; k < requested; k += 1) {
-    const index = Math.min(luminanceSorted.length - 1, Math.round(((k + 0.5) / requested) * (luminanceSorted.length - 1)));
-    centres.push({ ...luminanceSorted[index] });
-  }
-  for (let iteration = 0; iteration < 7; iteration += 1) {
-    const buckets = centres.map(() => [] as Rgb[]);
-    for (const pixel of sampled) buckets[nearestIndex(pixel, centres)].push(pixel);
-    centres = centres.map((centre, index) => buckets[index].length ? robustMean(buckets[index]) : centre);
-  }
-
-  const merged: Rgb[] = [];
-  for (const centre of centres) {
-    const existing = merged.find((candidate) => colorDistance(candidate, centre) < 48);
-    if (!existing) merged.push(centre);
-    else {
-      existing.r = Math.round((existing.r + centre.r) / 2);
-      existing.g = Math.round((existing.g + centre.g) / 2);
-      existing.b = Math.round((existing.b + centre.b) / 2);
-    }
-  }
-  return merged.slice(0, requested);
-}
-
 function robustMean(pixels: Rgb[]): Rgb {
   if (pixels.length === 0) return { r: 0, g: 0, b: 0 };
   return {
@@ -285,6 +322,10 @@ function colorDistance(a: Rgb, b: Rgb): number {
   return Math.sqrt(dr * dr * 0.9 + dg * dg * 1.25 + db * db * 0.75);
 }
 
+function chroma(pixel: Rgb): number {
+  return Math.max(pixel.r, pixel.g, pixel.b) - Math.min(pixel.r, pixel.g, pixel.b);
+}
+
 function luminance(pixel: Rgb): number { return 0.2126 * pixel.r + 0.7152 * pixel.g + 0.0722 * pixel.b; }
 
 function median(values: number[]): number {
@@ -293,7 +334,7 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function toTraceOptions(options: VectorizeOptions, traceScale = 1) {
+function toTraceOptions(options: VectorizeOptions, traceScale = 1, traceColors = options.colors) {
   const detail = options.detail / 100;
   const smoothing = options.smoothing / 100;
   const cleanGeometry = isFlatArtwork(options);
@@ -307,8 +348,8 @@ function toTraceOptions(options: VectorizeOptions, traceScale = 1) {
     pathomit: cleanGeometry ? Math.max(5, Math.round((1 - detail) * 14)) : Math.max(0, Math.round((1 - detail) * 12)),
     rightangleenhance: options.preset === 'logo' || options.preset === 'line-art',
     colorsampling: 0,
-    numberofcolors: cleanGeometry ? Math.min(options.colors, options.preset === 'logo' ? 4 : 2) : options.colors,
-    mincolorratio: cleanGeometry ? 0.012 : 0,
+    numberofcolors: cleanGeometry ? traceColors : options.colors,
+    mincolorratio: cleanGeometry ? 0.006 : 0,
     colorquantcycles: cleanGeometry ? 2 : options.colors <= 4 ? 2 : 3,
     layering: 0,
     strokewidth: 0,
