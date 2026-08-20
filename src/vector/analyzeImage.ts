@@ -37,8 +37,8 @@ export async function analyzeImage(file: File): Promise<ImageAnalysis> {
 
     const megapixels = (bitmap.width * bitmap.height) / 1_000_000;
     if (megapixels > 12) warnings.push('Large source image; conversion may take longer.');
-    if (signals.colorComplexity > 0.8) warnings.push('Many foreground color transitions detected; expect a larger SVG.');
-    if (signals.edgeDensity > 0.42) warnings.push('Very dense detail detected; some simplification may improve editability.');
+    if (signals.colorComplexity > 0.8 && likelyKind !== 'logo') warnings.push('Many foreground color transitions detected; expect a larger SVG.');
+    if (signals.edgeDensity > 0.42 && likelyKind !== 'logo') warnings.push('Very dense detail detected; some simplification may improve editability.');
 
     return {
       width: bitmap.width,
@@ -78,20 +78,28 @@ export function classifyImageSignals(signals: ImageSignals): VectorPreset {
     saturation < 0.22;
   if (lineArtLike) return 'line-art';
 
-  // JPEG logos/stamps often look artificially "complex" because anti-aliasing and
-  // compression create many near-white shades. A dominant light background plus a
-  // relatively small saturated/dark foreground is a much stronger logo signal.
+  // Scanned stamps and JPEG logos are deceptively complex: antialiasing, paper
+  // texture and compression can create hundreds of shades even when the intended
+  // artwork has only one or two inks. Detect the composition (light page + compact
+  // dark/saturated artwork) before falling back to raw color-complexity metrics.
+  const scannedBrandArt =
+    lightBackground > 0.38 &&
+    darkInk > 0.008 && darkInk < 0.48 &&
+    edgeDensity < 0.5 &&
+    (saturation > 0.035 || alphaCoverage > 0.025);
+
   const lightBackgroundBrandArt =
-    lightBackground > 0.5 &&
-    edgeDensity < 0.36 &&
-    darkInk < 0.38 &&
-    (saturation > 0.06 || colorComplexity < 0.5);
+    lightBackground > 0.48 &&
+    edgeDensity < 0.42 &&
+    darkInk < 0.42 &&
+    (saturation > 0.045 || colorComplexity < 0.62);
 
   const logoLike =
+    scannedBrandArt ||
     lightBackgroundBrandArt ||
-    (colorComplexity < 0.42 &&
-      edgeDensity < 0.3 &&
-      (saturation > 0.08 || alphaCoverage > 0.04 || lightBackground > 0.35));
+    (colorComplexity < 0.46 &&
+      edgeDensity < 0.34 &&
+      (saturation > 0.07 || alphaCoverage > 0.04 || lightBackground > 0.35));
   if (logoLike) return 'logo';
 
   if (colorComplexity > 0.72 || edgeDensity > 0.38) return 'high-detail';
@@ -104,7 +112,10 @@ export function recommendationConfidence(signals: ImageSignals, preset: VectorPr
     : preset === 'line-art'
       ? (signals.edgeDensity - 0.15) + (0.24 - signals.colorComplexity)
       : preset === 'logo'
-        ? Math.max((0.42 - signals.colorComplexity) + (0.3 - signals.edgeDensity), (signals.lightBackground - 0.5) + (0.36 - signals.edgeDensity))
+        ? Math.max(
+            (signals.lightBackground - 0.38) + (0.5 - signals.edgeDensity) + signals.saturation,
+            (0.46 - signals.colorComplexity) + (0.34 - signals.edgeDensity),
+          )
         : preset === 'high-detail'
           ? Math.max(signals.colorComplexity - 0.72, signals.edgeDensity - 0.38) * 2
           : 0.22;
@@ -144,9 +155,6 @@ function measureSignals(
     const min = Math.min(r, g, b);
     if (max - min > 55) saturated += 1;
 
-    // Ignore the near-white page/background when estimating artwork complexity.
-    // Also use coarser 3-bit channel bins so JPEG anti-alias shades do not make a
-    // one/two-color logo look like a photograph.
     if (luminance < 232 || max - min > 28) {
       foreground += 1;
       foregroundBins.add(((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5));
