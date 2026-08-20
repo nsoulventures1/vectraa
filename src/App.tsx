@@ -7,7 +7,7 @@ import { downloadSvg, svgFilename } from './vector/exportSvg';
 import type { FidelityResult } from './vector/fidelity';
 import { preprocessLogoForRescue, recommendedLogoRescueOptions } from './vector/logoRescue';
 import { vectorizeBestOf } from './vector/multipass';
-import { NeplexVectorEngine } from './vector/NeplexVectorEngine';
+import { JsVectorEngine } from './vector/JsVectorEngine';
 import { DEFAULT_OPTIONS } from './vector/presets';
 import { assessPurpose, PURPOSES, type ProductionPurpose } from './vector/purpose';
 import { purposeLabel, recommendVectorWorkflow, type VectorRecommendation } from './vector/recommendation';
@@ -16,7 +16,7 @@ import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
 import { addConversionHistoryItem, clearConversionHistory, createHistoryItem, readConversionHistory, type ConversionHistoryItem } from './workspace/history';
 import { WorkspacePanel } from './workspace/WorkspacePanel';
 
-const engine = new NeplexVectorEngine();
+const engine = new JsVectorEngine();
 const PRESETS: Array<{ id: VectorPreset; label: string }> = [
   { id: 'logo', label: 'Logo' }, { id: 'illustration', label: 'Illustration' }, { id: 'line-art', label: 'Line art' }, { id: 'signature', label: 'Signature' }, { id: 'high-detail', label: 'High detail' },
 ];
@@ -87,29 +87,14 @@ export default function App() {
       const multi = await vectorizeBestOf(engine, processingFile, base, 3);
       if (!conversionRun.current.isCurrent(run)) return;
       setResult(multi.best.result); setFidelity(multi.best.fidelity); setSelectedPass(multi.best.id); setPassCount(multi.candidates.length);
-      setHistory(addConversionHistoryItem(createHistoryItem({
-        fileName: sourceFile.name,
-        preset,
-        purpose,
-        qualityScore: multi.best.result.quality.score,
-        fidelityScore: multi.best.fidelity?.score,
-        paths: multi.best.result.quality.paths,
-        bytes: multi.best.result.quality.bytes,
-      })));
+      setHistory(addConversionHistoryItem(createHistoryItem({ fileName: sourceFile.name, preset, purpose, qualityScore: multi.best.result.quality.score, fidelityScore: multi.best.fidelity?.score, paths: multi.best.result.quality.paths, bytes: multi.best.result.quality.bytes })));
     } catch (err) {
       if (conversionRun.current.isCurrent(run)) { setResult(null); setError(err instanceof Error ? `${err.message} Try a smaller or simpler image, or refresh and retry.` : 'Vectorization failed. Try a smaller or simpler image, or refresh and retry.'); }
     } finally { if (conversionRun.current.isCurrent(run)) setRunning(false); }
   }
 
-  function download() {
-    if (!result) return;
-    downloadSvg(result.svg, svgFilename(file?.name, `${logoRescue ? '-rescued' : ''}${purposeProfile.suffix}`));
-  }
-
-  function clearHistory() {
-    clearConversionHistory();
-    setHistory([]);
-  }
+  function download() { if (result) downloadSvg(result.svg, svgFilename(file?.name, `${logoRescue ? '-rescued' : ''}${purposeProfile.suffix}`)); }
+  function clearHistory() { clearConversionHistory(); setHistory([]); }
 
   return <main>
     <header className="nav"><a className="brand" href="/">Vectraa<span>.</span></a><nav className="navLinks"><a href="#workspace">Workspace</a><a href="#how-it-works">How it works</a><a href="#privacy">Privacy</a><a href="#faq">FAQ</a></nav><div className="privacy">Private by design · processed on your device</div></header>
@@ -128,8 +113,7 @@ export default function App() {
     <WorkspacePanel items={history} onClear={clearHistory} />
     <section className="trust"><div><b>01</b><strong>Local processing</strong><p>Your basic conversion runs on your device.</p></div><div><b>02</b><strong>Smart adaptive tracing</strong><p>Vectraa spends extra passes only when the quality data says they are useful.</p></div><div><b>03</b><strong>No account. No watermark.</strong><p>Convert and download without creating an account.</p></div></section>
     <section id="how-it-works" className="contentSection"><span className="sectionKicker">HOW IT WORKS</span><h2>From raster image to genuine SVG paths.</h2><div className="contentGrid"><article><b>1</b><h3>Analyze</h3><p>Vectraa inspects the image locally and recommends a tracing workflow based on detail, colors, transparency and edge structure.</p></article><article><b>2</b><h3>Trace intelligently</h3><p>Adaptive passes balance visual similarity against clean, editable vector structure instead of blindly returning the first trace.</p></article><article><b>3</b><h3>Inspect and export</h3><p>Compare the original with the SVG, review vector health, choose the intended use, and download a clean SVG file.</p></article></div></section>
-    <section id="privacy" className="contentSection privacySection"><span className="sectionKicker">PRIVACY</span><h2>Your artwork stays on your device for basic conversion.</h2><p className="sectionLead">Vectraa’s core JPG, PNG and WebP conversion is designed to run in your browser. The basic converter does not require an account and does not upload normal conversion artwork to a Vectraa image-storage service.</p><div className="privacyFacts"><span>No account required</span><span>No watermark</span><span>No basic-conversion image storage</span><span>SVG output is sanitized before use</span></div></section>
-    <section id="faq" className="contentSection"><span className="sectionKicker">FAQ</span><h2>Questions before you convert.</h2><div className="faqGrid"><details><summary>Is the downloaded file a real vector?</summary><p>Yes. Vectraa generates SVG geometry such as paths and shapes, not a raster image hidden inside an SVG wrapper.</p></details><details><summary>Does Vectraa upload my image?</summary><p>The basic raster-to-vector workflow is designed for local browser processing. Future AI generation features may require a separate provider and will be clearly disclosed before use.</p></details><details><summary>Can every photograph become a clean logo-style vector?</summary><p>No. Highly detailed photographs can require thousands of shapes. Vectraa measures complexity and warns when an input is better treated as high-detail artwork.</p></details><details><summary>Is a laser or Cricut export machine-ready?</summary><p>No. Vectraa checks common vector risks, but final scale, open paths, kerf, material settings and machine requirements must be verified in production software.</p></details><details><summary>What is Logo Rescue?</summary><p>Logo Rescue is optional preprocessing for poor raster logos. It can reduce noise, simplify colors and remove near-white backgrounds before tracing.</p></details><details><summary>Is Vectraa free?</summary><p>The core converter is being built as a genuinely useful free service with no watermark. Premium usage or future AI-generation features may be introduced separately later.</p></details></div></section>
-    <footer className="footer"><a className="brand" href="/">Vectraa<span>.</span></a><p>Anything → Vector. Private, local-first SVG conversion.</p><nav><a href="#workspace">Workspace</a><a href="#how-it-works">How it works</a><a href="#privacy">Privacy</a><a href="#faq">FAQ</a></nav></footer>
+    <section id="privacy" className="contentSection privacySection"><span className="sectionKicker">PRIVACY</span><h2>Your artwork stays on your device for basic conversion.</h2><p className="sectionLead">Vectraa’s core JPG, PNG and WebP conversion is designed to run in your browser. The basic converter does not require an account and does not upload normal conversion artwork to a Vectraa image-storage service.</p><div className="privacyFacts"><span>No account required</span><span>No watermark</span><span>Local browser conversion</span></div></section>
+    <section id="faq" className="contentSection"><span className="sectionKicker">FAQ</span><h2>Useful answers before you export.</h2><div className="faqList"><details><summary>Is the downloaded file a real vector?</summary><p>Yes. Vectraa exports SVG geometry made from vector paths rather than embedding your original raster image inside an SVG wrapper.</p></details><details><summary>Does my image leave my device?</summary><p>Core conversion is performed locally in your browser. Optional cloud workspace features may sync conversion metadata, but normal conversion artwork is not required to be uploaded.</p></details><details><summary>Can I use the SVG for printing?</summary><p>SVG is suitable for many print workflows. Always confirm final size, colors, fonts and machine requirements with your printer or production vendor.</p></details></div></section>
   </main>;
 }
