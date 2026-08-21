@@ -111,7 +111,8 @@ function traceLogoLayers(imageData:ImageData,palette:Rgb[],baseOptions:Record<st
   palette.forEach((color,index)=>{
     const layer=new ImageData(width,height); const src=imageData.data,dst=layer.data;
     for(let i=0;i<src.length;i+=4){if(src[i+3]<10)continue;const current={r:src[i],g:src[i+1],b:src[i+2]};if(nearestIndex(current,palette)!==index)continue;dst[i]=color.r;dst[i+1]=color.g;dst[i+2]=color.b;dst[i+3]=255;}
-    const layerSvg=ImageTracer.imagedataToSVG(layer,{...baseOptions,numberofcolors:2,colorquantcycles:1,pal:[{r:255,g:255,b:255,a:0},{r:color.r,g:color.g,b:color.b,a:255}]});
+    const layerOptions = {...baseOptions,numberofcolors:2,colorquantcycles:1,pal:[{r:255,g:255,b:255,a:0},{r:color.r,g:color.g,b:color.b,a:255}]} as Parameters<typeof ImageTracer.imagedataToSVG>[1];
+    const layerSvg=ImageTracer.imagedataToSVG(layer,layerOptions);
     if(!root)root=layerSvg.match(/<svg\b[^>]*>/)?.[0]??`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">`;
     const pathTags=layerSvg.match(/<path\b[^>]*\/>|<path\b[^>]*>[\s\S]*?<\/path>/g)??[];
     const rgb=`rgb(${color.r},${color.g},${color.b})`;
