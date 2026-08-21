@@ -19,7 +19,7 @@ export class JsVectorEngine implements VectorEngine {
     const prepared: PreparedImage = isFlatArtwork(options)
       ? prepareFlatArtwork(decoded, options)
       : { imageData: decoded, traceScale: 1, traceColors: options.colors };
-    const traced = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale, prepared.traceColors));
+    const traced = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale, prepared.traceColors, prepared.palette));
     const svgRaw = prepared.palette?.length ? snapSvgColorsToPalette(traced, prepared.palette) : traced;
     const svg = assertSafeSvg(sanitizeGeneratedSvg(svgRaw));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
@@ -278,8 +278,30 @@ function rgbToHsv(pixel:Rgb):{h:number;s:number;v:number}{
   return {h,s:max===0?0:delta/max,v:max};
 }
 
-function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors){
+function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors,palette?:Rgb[]){
   const detail=options.detail/100,smoothing=options.smoothing/100,cleanGeometry=isFlatArtwork(options),logo=options.preset==='logo';
   const traceTolerance=logo?Math.max(0.38,1.22-detail*0.72):cleanGeometry?Math.max(0.72,2.05-detail*1.08):Math.max(0.18,2.2-detail*1.9);
-  return {ltres:traceTolerance,qtres:traceTolerance,pathomit:logo?0:cleanGeometry?Math.max(3,Math.round((1-detail)*10)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:cleanGeometry?traceColors:options.colors,mincolorratio:logo?0.0002:cleanGeometry?0.004:0,colorquantcycles:logo?1:cleanGeometry?2:options.colors<=4?2:3,layering:0,strokewidth:0,linefilter:logo?false:cleanGeometry||smoothing>0.65,scale:traceScale,roundcoords:logo?4:cleanGeometry?2:detail>0.8?2:1,viewbox:true,desc:false,blurradius:0,blurdelta:logo?12:cleanGeometry?34:20};
+  const fixedPalette = palette?.length
+    ? [{r:255,g:255,b:255,a:0}, ...palette.map((color)=>({r:color.r,g:color.g,b:color.b,a:255}))]
+    : undefined;
+  return {
+    ltres:traceTolerance,
+    qtres:traceTolerance,
+    pathomit:logo?0:cleanGeometry?Math.max(3,Math.round((1-detail)*10)):Math.max(0,Math.round((1-detail)*12)),
+    rightangleenhance:logo||options.preset==='line-art',
+    colorsampling:0,
+    numberofcolors:cleanGeometry?traceColors:options.colors,
+    mincolorratio:logo?0.0002:cleanGeometry?0.004:0,
+    colorquantcycles:1,
+    layering:0,
+    strokewidth:0,
+    linefilter:logo?false:cleanGeometry||smoothing>0.65,
+    scale:traceScale,
+    roundcoords:logo?4:cleanGeometry?2:detail>0.8?2:1,
+    viewbox:true,
+    desc:false,
+    blurradius:0,
+    blurdelta:logo?12:cleanGeometry?34:20,
+    ...(fixedPalette ? { pal: fixedPalette } : {}),
+  };
 }
