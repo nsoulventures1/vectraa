@@ -89,72 +89,75 @@ function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): Re
 
 function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
   if (!pixels.length) return [];
-  if (maxColors <= 1) return [robustMean(pixels)];
+  if (maxColors <= 1) return [modalRepresentative(pixels)];
 
-  // Build the logo palette by hue family first, not by RGB density. This is crucial
-  // for brand marks where a small accent (gold/red/green) occupies far fewer pixels
-  // than the main navy/black ink. Compression shades may be numerous, but they stay
-  // inside the same hue family and therefore cannot crowd out a true accent colour.
   const step = Math.max(1, Math.floor(pixels.length / 60000));
   const sampled: Rgb[] = [];
   for (let index = 0; index < pixels.length; index += step) sampled.push(pixels[index]);
 
-  interface Family { pixels: Rgb[]; weight: number; hue: number; representative: Rgb }
+  interface Family { pixels: Rgb[]; weight: number; representative: Rgb }
   const families = new Map<number, Rgb[]>();
   const neutral: Rgb[] = [];
 
   for (const pixel of sampled) {
     const hsv = rgbToHsv(pixel);
     const lum = luminance(pixel) / 255;
-
-    // Very pale pixels are almost always antialias/background contamination.
     if (hsv.v > 0.92 && hsv.s < 0.18) continue;
-
     if (hsv.s < 0.16) {
       if (lum < 0.72) neutral.push(pixel);
       continue;
     }
-
-    // 12-degree hue bins are narrow enough to separate navy from gold while broad
-    // enough to collapse JPEG edge shades. Adjacent bins are merged below.
     const bucket = Math.floor(hsv.h / 12);
     const list = families.get(bucket) ?? [];
     list.push(pixel);
     families.set(bucket, list);
   }
 
-  const rawFamilies = [...families.entries()].map(([bucket, familyPixels]) => {
-    const representative = saturatedRepresentative(familyPixels);
+  const rawFamilies: Family[] = [...families.values()].map((familyPixels) => {
+    const representative = modalRepresentative(familyPixels);
     const hsv = rgbToHsv(representative);
     const meanSaturation = familyPixels.reduce((sum, pixel) => sum + rgbToHsv(pixel).s, 0) / familyPixels.length;
-    const weight = familyPixels.length * (0.7 + meanSaturation * 1.9);
-    return { pixels: familyPixels, weight, hue: bucket * 12 + 6, representative };
+    const weight = familyPixels.length * (0.9 + meanSaturation * 0.8);
+    return { pixels: familyPixels, weight, representative };
   }).sort((a, b) => b.weight - a.weight);
 
   const selected: Rgb[] = [];
-  const selectedHues: number[] = [];
   const minimumFamilySize = Math.max(2, Math.floor(sampled.length * 0.0015));
 
   for (const family of rawFamilies) {
     if (selected.length >= maxColors) break;
     if (family.pixels.length < minimumFamilySize) continue;
+    const color = family.representative;
+    const hsv = rgbToHsv(color);
 
-    const hsv = rgbToHsv(family.representative);
-    const isNewHue = selectedHues.every((hue) => circularHueDistance(hue, hsv.h) >= 24);
-    if (!isNewHue) continue;
+    // Reject low-saturation hue ghosts created by antialiasing beside a stronger ink.
+    // Example: navy edges often create a desaturated blue-grey family 20–40° away.
+    const ghostOfExisting = selected.some((existing) => {
+      const e = rgbToHsv(existing);
+      return circularHueDistance(e.h, hsv.h) < 55 && e.s >= 0.58 && hsv.s < 0.46 && hsv.s < e.s * 0.72;
+    });
+    if (ghostOfExisting) continue;
 
-    selected.push(family.representative);
-    selectedHues.push(hsv.h);
+    const distinct = selected.every((existing) => {
+      const e = rgbToHsv(existing);
+      const hueGap = circularHueDistance(e.h, hsv.h);
+      if (hueGap < 22) return false;
+      if (colorDistance(existing, color) < 42) return false;
+      return true;
+    });
+    if (!distinct) continue;
+
+    selected.push(color);
   }
 
-  // If a real warm accent exists, explicitly reserve it. Small gold/orange/red
-  // elements are common in brand logos and must not disappear behind a dominant blue.
+  // Explicitly protect warm accents (gold/orange/red), even when they occupy much less
+  // area than the dominant brand colour.
   const warmPixels = sampled.filter((pixel) => {
     const hsv = rgbToHsv(pixel);
-    return hsv.s >= 0.24 && hsv.v >= 0.28 && (hsv.h <= 75 || hsv.h >= 345);
+    return hsv.s >= 0.22 && hsv.v >= 0.28 && (hsv.h <= 78 || hsv.h >= 345);
   });
   if (warmPixels.length >= minimumFamilySize) {
-    const warm = saturatedRepresentative(warmPixels);
+    const warm = modalRepresentative(warmPixels);
     const warmHsv = rgbToHsv(warm);
     const alreadyCovered = selected.some((color) => circularHueDistance(rgbToHsv(color).h, warmHsv.h) < 22);
     if (!alreadyCovered) {
@@ -163,47 +166,35 @@ function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
     }
   }
 
-  // Dark neutral inks (black/charcoal) are legitimate in many logos. Add one only
-  // when it is materially represented and not already covered by a dark selected ink.
   if (neutral.length >= minimumFamilySize) {
-    const neutralColor = coreRepresentative(neutral);
+    const neutralColor = modalRepresentative(neutral);
     const alreadyCovered = selected.some((color) => colorDistance(color, neutralColor) < 44);
     if (!alreadyCovered && selected.length < maxColors) selected.push(neutralColor);
   }
 
-  if (!selected.length) return [coreRepresentative(sampled)];
-
+  if (!selected.length) return [modalRepresentative(sampled)];
   return selected.slice(0, maxColors);
 }
 
-function saturatedRepresentative(pixels: Rgb[]): Rgb {
+/**
+ * Returns the densest actual source colour rather than the most saturated colour.
+ * This preserves brand colours much more faithfully: antialiased edge pixels can no
+ * longer drag navy toward black or gold toward orange.
+ */
+function modalRepresentative(pixels: Rgb[]): Rgb {
   if (!pixels.length) return { r: 0, g: 0, b: 0 };
-  const ranked = pixels
-    .map((pixel) => ({ pixel, hsv: rgbToHsv(pixel) }))
-    .filter(({ hsv }) => hsv.v < 0.96)
-    .sort((a, b) => (b.hsv.s * 0.72 + (1 - Math.abs(b.hsv.v - 0.58)) * 0.28) - (a.hsv.s * 0.72 + (1 - Math.abs(a.hsv.v - 0.58)) * 0.28));
-  const core = ranked.slice(0, Math.max(4, Math.ceil(ranked.length * 0.45))).map(({ pixel }) => pixel);
-  return coreRepresentative(core.length ? core : pixels);
-}
-
-function coreRepresentative(pixels: Rgb[]): Rgb {
-  if (!pixels.length) return { r: 0, g: 0, b: 0 };
-  if (pixels.length < 8) return robustMean(pixels);
-
-  // Pick the densest central portion in RGB space instead of averaging all edge
-  // shades. Medoid-like selection is stable for compressed logos and scans.
-  const sampleStep = Math.max(1, Math.floor(pixels.length / 180));
-  const sample = pixels.filter((_, index) => index % sampleStep === 0);
-  let best = sample[0];
-  let bestScore = Number.POSITIVE_INFINITY;
-  for (const candidate of sample) {
-    let score = 0;
-    for (const other of sample) score += Math.min(90, colorDistance(candidate, other));
-    if (score < bestScore) { bestScore = score; best = candidate; }
+  const bins = new Map<number, { pixels: Rgb[]; count: number }>();
+  for (const pixel of pixels) {
+    const key = ((pixel.r >> 3) << 10) | ((pixel.g >> 3) << 5) | (pixel.b >> 3);
+    const bin = bins.get(key) ?? { pixels: [], count: 0 };
+    bin.pixels.push(pixel);
+    bin.count += 1;
+    bins.set(key, bin);
   }
-
-  const local = pixels.filter((pixel) => colorDistance(pixel, best) <= 24);
-  return local.length >= 4 ? robustMean(local) : best;
+  const winner = [...bins.values()].sort((a, b) => b.count - a.count)[0];
+  const center = robustMean(winner.pixels);
+  const local = pixels.filter((pixel) => colorDistance(pixel, center) <= 22);
+  return local.length >= winner.pixels.length ? robustMean(local) : center;
 }
 
 function supersampleFlatArtwork(source: ImageData, palette: Rgb[], factor: number, options: VectorizeOptions): ImageData {
