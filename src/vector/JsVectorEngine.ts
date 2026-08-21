@@ -76,7 +76,9 @@ function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): Re
     if (distance >= strongThreshold || chroma(pixel) >= 40) strongPixels.push(pixel);
   }
   cleanMask(foregroundMask, width, height, options.preset === 'logo');
-  const palette = options.preset === 'logo' ? buildAdaptiveBrandPalette(strongPixels, 4) : buildAdaptiveBrandPalette(strongPixels, 1);
+  const palette = options.preset === 'logo'
+    ? buildLogoPaletteFromInterior(source, foregroundMask, width, height, strongPixels, 4)
+    : buildAdaptiveBrandPalette(strongPixels, 1);
   if (!palette.length) palette.push({ r: 32, g: 52, b: 96 });
   const output = new ImageData(width, height); const data = output.data;
   for (let p = 0, i = 0; p < foregroundMask.length; p += 1, i += 4) {
@@ -85,6 +87,54 @@ function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): Re
     data[i] = nearest.r; data[i + 1] = nearest.g; data[i + 2] = nearest.b; data[i + 3] = 255;
   }
   return { imageData: output, palette };
+}
+
+function buildLogoPaletteFromInterior(
+  source: Uint8ClampedArray,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  fallbackPixels: Rgb[],
+  maxColors: number,
+): Rgb[] {
+  const interior: Rgb[] = [];
+  const nearInterior: Rgb[] = [];
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const p = y * width + x;
+      if (!mask[p]) continue;
+      let neighbours = 0;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (dx === 0 && dy === 0) continue;
+          neighbours += mask[(y + dy) * width + (x + dx)];
+        }
+      }
+      const i = p * 4;
+      const pixel = { r: source[i], g: source[i + 1], b: source[i + 2] };
+      if (neighbours >= 7) interior.push(pixel);
+      else if (neighbours >= 5) nearInterior.push(pixel);
+    }
+  }
+
+  const candidates = interior.length >= 32
+    ? interior
+    : interior.concat(nearInterior.length ? nearInterior : fallbackPixels);
+  const palette = buildAdaptiveBrandPalette(candidates.length ? candidates : fallbackPixels, maxColors);
+
+  return palette.map((seed) => {
+    const seedHsv = rgbToHsv(seed);
+    const local: Rgb[] = [];
+    for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
+      if (!mask[p]) continue;
+      const pixel = { r: source[i], g: source[i + 1], b: source[i + 2] };
+      const hsv = rgbToHsv(pixel);
+      const hueGap = seedHsv.s < 0.14 || hsv.s < 0.14 ? 0 : circularHueDistance(seedHsv.h, hsv.h);
+      if (hueGap <= 16 && colorDistance(pixel, seed) <= 72) local.push(pixel);
+    }
+    return local.length >= 8 ? modalRepresentative(local) : seed;
+  });
 }
 
 function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
@@ -102,12 +152,12 @@ function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
   for (const pixel of sampled) {
     const hsv = rgbToHsv(pixel);
     const lum = luminance(pixel) / 255;
-    if (hsv.v > 0.92 && hsv.s < 0.18) continue;
-    if (hsv.s < 0.16) {
+    if (hsv.v > 0.94 && hsv.s < 0.16) continue;
+    if (hsv.s < 0.14) {
       if (lum < 0.72) neutral.push(pixel);
       continue;
     }
-    const bucket = Math.floor(hsv.h / 12);
+    const bucket = Math.floor(hsv.h / 10);
     const list = families.get(bucket) ?? [];
     list.push(pixel);
     families.set(bucket, list);
@@ -115,86 +165,65 @@ function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
 
   const rawFamilies: Family[] = [...families.values()].map((familyPixels) => {
     const representative = modalRepresentative(familyPixels);
-    const hsv = rgbToHsv(representative);
     const meanSaturation = familyPixels.reduce((sum, pixel) => sum + rgbToHsv(pixel).s, 0) / familyPixels.length;
-    const weight = familyPixels.length * (0.9 + meanSaturation * 0.8);
-    return { pixels: familyPixels, weight, representative };
+    return { pixels: familyPixels, weight: familyPixels.length * (0.95 + meanSaturation * 0.55), representative };
   }).sort((a, b) => b.weight - a.weight);
 
   const selected: Rgb[] = [];
-  const minimumFamilySize = Math.max(2, Math.floor(sampled.length * 0.0015));
+  const minimumFamilySize = Math.max(2, Math.floor(sampled.length * 0.001));
 
   for (const family of rawFamilies) {
     if (selected.length >= maxColors) break;
     if (family.pixels.length < minimumFamilySize) continue;
     const color = family.representative;
     const hsv = rgbToHsv(color);
-
-    // Reject low-saturation hue ghosts created by antialiasing beside a stronger ink.
-    // Example: navy edges often create a desaturated blue-grey family 20–40° away.
     const ghostOfExisting = selected.some((existing) => {
       const e = rgbToHsv(existing);
-      return circularHueDistance(e.h, hsv.h) < 55 && e.s >= 0.58 && hsv.s < 0.46 && hsv.s < e.s * 0.72;
+      return circularHueDistance(e.h, hsv.h) < 45 && e.s >= 0.55 && hsv.s < 0.40 && hsv.s < e.s * 0.68;
     });
     if (ghostOfExisting) continue;
-
     const distinct = selected.every((existing) => {
       const e = rgbToHsv(existing);
-      const hueGap = circularHueDistance(e.h, hsv.h);
-      if (hueGap < 22) return false;
-      if (colorDistance(existing, color) < 42) return false;
-      return true;
+      return circularHueDistance(e.h, hsv.h) >= 20 && colorDistance(existing, color) >= 38;
     });
-    if (!distinct) continue;
-
-    selected.push(color);
+    if (distinct) selected.push(color);
   }
 
-  // Explicitly protect warm accents (gold/orange/red), even when they occupy much less
-  // area than the dominant brand colour.
   const warmPixels = sampled.filter((pixel) => {
     const hsv = rgbToHsv(pixel);
-    return hsv.s >= 0.22 && hsv.v >= 0.28 && (hsv.h <= 78 || hsv.h >= 345);
+    return hsv.s >= 0.18 && hsv.v >= 0.24 && (hsv.h <= 82 || hsv.h >= 348);
   });
   if (warmPixels.length >= minimumFamilySize) {
     const warm = modalRepresentative(warmPixels);
     const warmHsv = rgbToHsv(warm);
-    const alreadyCovered = selected.some((color) => circularHueDistance(rgbToHsv(color).h, warmHsv.h) < 22);
-    if (!alreadyCovered) {
+    const covered = selected.some((color) => circularHueDistance(rgbToHsv(color).h, warmHsv.h) < 20);
+    if (!covered) {
       if (selected.length >= maxColors) selected[selected.length - 1] = warm;
       else selected.push(warm);
     }
   }
 
-  if (neutral.length >= minimumFamilySize) {
+  if (neutral.length >= minimumFamilySize && selected.length < maxColors) {
     const neutralColor = modalRepresentative(neutral);
-    const alreadyCovered = selected.some((color) => colorDistance(color, neutralColor) < 44);
-    if (!alreadyCovered && selected.length < maxColors) selected.push(neutralColor);
+    if (!selected.some((color) => colorDistance(color, neutralColor) < 42)) selected.push(neutralColor);
   }
 
-  if (!selected.length) return [modalRepresentative(sampled)];
-  return selected.slice(0, maxColors);
+  return (selected.length ? selected : [modalRepresentative(sampled)]).slice(0, maxColors);
 }
 
-/**
- * Returns the densest actual source colour rather than the most saturated colour.
- * This preserves brand colours much more faithfully: antialiased edge pixels can no
- * longer drag navy toward black or gold toward orange.
- */
 function modalRepresentative(pixels: Rgb[]): Rgb {
   if (!pixels.length) return { r: 0, g: 0, b: 0 };
-  const bins = new Map<number, { pixels: Rgb[]; count: number }>();
+  const bins = new Map<number, Rgb[]>();
   for (const pixel of pixels) {
     const key = ((pixel.r >> 3) << 10) | ((pixel.g >> 3) << 5) | (pixel.b >> 3);
-    const bin = bins.get(key) ?? { pixels: [], count: 0 };
-    bin.pixels.push(pixel);
-    bin.count += 1;
+    const bin = bins.get(key) ?? [];
+    bin.push(pixel);
     bins.set(key, bin);
   }
-  const winner = [...bins.values()].sort((a, b) => b.count - a.count)[0];
-  const center = robustMean(winner.pixels);
-  const local = pixels.filter((pixel) => colorDistance(pixel, center) <= 22);
-  return local.length >= winner.pixels.length ? robustMean(local) : center;
+  const winner = [...bins.values()].sort((a, b) => b.length - a.length)[0];
+  const center = robustMean(winner);
+  const local = pixels.filter((pixel) => colorDistance(pixel, center) <= 16);
+  return robustMean(local.length >= winner.length ? local : winner);
 }
 
 function supersampleFlatArtwork(source: ImageData, palette: Rgb[], factor: number, options: VectorizeOptions): ImageData {
