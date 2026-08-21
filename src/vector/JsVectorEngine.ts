@@ -20,10 +20,6 @@ export class JsVectorEngine implements VectorEngine {
       ? prepareFlatArtwork(decoded, options)
       : { imageData: decoded, traceScale: 1, traceColors: options.colors };
     const traced = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale, prepared.traceColors));
-    // ImageTracer performs its own color quantization even after our source pixels
-    // have been snapped to the detected brand palette. That was visibly shifting
-    // navy toward near-black and gold toward orange. For flat artwork, restore the
-    // traced fills/strokes to the exact colors measured from the uploaded source.
     const svgRaw = prepared.palette?.length ? snapSvgColorsToPalette(traced, prepared.palette) : traced;
     const svg = assertSafeSvg(sanitizeGeneratedSvg(svgRaw));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
@@ -94,47 +90,96 @@ function reconstructFlatArtwork(input: ImageData, options: VectorizeOptions): Re
 function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
   if (!pixels.length) return [];
   if (maxColors <= 1) return [robustMean(pixels)];
-  interface Bin { color: Rgb; count: number }
-  const bins = new Map<number, { r: number; g: number; b: number; count: number }>();
-  const step = Math.max(1, Math.floor(pixels.length / 40000));
+
+  interface HueBin { pixels: Rgb[]; weight: number; representative: Rgb }
+  const bins = new Map<string, Rgb[]>();
+  const step = Math.max(1, Math.floor(pixels.length / 50000));
+
   for (let index = 0; index < pixels.length; index += step) {
     const pixel = pixels[index];
-    const key = ((pixel.r >> 3) << 10) | ((pixel.g >> 3) << 5) | (pixel.b >> 3);
-    const bin = bins.get(key) ?? { r: 0, g: 0, b: 0, count: 0 };
-    bin.r += pixel.r; bin.g += pixel.g; bin.b += pixel.b; bin.count += 1; bins.set(key, bin);
+    const hsv = rgbToHsv(pixel);
+    const lum = luminance(pixel) / 255;
+
+    // Reject pale antialias/white contamination from palette discovery. True dark
+    // brand colors are still kept even when their saturation is modest.
+    const isCore = hsv.s >= 0.20 || hsv.v <= 0.55 || lum <= 0.52;
+    if (!isCore) continue;
+
+    const hueBucket = hsv.s < 0.12 ? -1 : Math.floor(hsv.h / 15);
+    const satBucket = Math.min(3, Math.floor(hsv.s * 4));
+    const valBucket = Math.min(3, Math.floor(hsv.v * 4));
+    const key = `${hueBucket}:${satBucket}:${valBucket}`;
+    const bucket = bins.get(key) ?? [];
+    bucket.push(pixel);
+    bins.set(key, bucket);
   }
-  const candidates: Bin[] = [...bins.values()].map((bin) => ({ count: bin.count, color: { r: Math.round(bin.r / bin.count), g: Math.round(bin.g / bin.count), b: Math.round(bin.b / bin.count) } })).sort((a, b) => b.count - a.count);
-  const sampledCount = candidates.reduce((sum, item) => sum + item.count, 0);
-  if (!candidates.length) return [];
-  const selected: Rgb[] = [candidates[0].color];
-  while (selected.length < maxColors) {
-    let best: Bin | undefined; let bestScore = 0;
-    for (const candidate of candidates) {
-      const share = candidate.count / Math.max(1, sampledCount);
-      if (share < 0.004) continue;
-      const minDistance = Math.min(...selected.map((color) => colorDistance(candidate.color, color)));
-      if (minDistance < 52) continue;
-      const score = candidate.count * (1 + chroma(candidate.color) / 145) * Math.pow(Math.min(1.9, minDistance / 92), 1.35);
-      if (score > bestScore) { best = candidate; bestScore = score; }
-    }
-    if (!best) break; selected.push(best.color);
+
+  const candidates: HueBin[] = [...bins.values()]
+    .filter((bucket) => bucket.length >= 2)
+    .map((bucket) => {
+      const representative = coreRepresentative(bucket);
+      const hsv = rgbToHsv(representative);
+      const darknessBonus = 1 + Math.max(0, 0.58 - hsv.v) * 1.4;
+      const saturationBonus = 1 + hsv.s * 1.6;
+      return { pixels: bucket, representative, weight: bucket.length * darknessBonus * saturationBonus };
+    })
+    .sort((a, b) => b.weight - a.weight);
+
+  if (!candidates.length) return [robustMean(pixels)];
+
+  const selected: Rgb[] = [];
+  for (const candidate of candidates) {
+    if (selected.length >= maxColors) break;
+    const color = candidate.representative;
+    const hsv = rgbToHsv(color);
+
+    // Require genuinely distinct color identity, not just a lighter/darker antialias
+    // version of an already selected ink.
+    const distinct = selected.every((existing) => {
+      const existingHsv = rgbToHsv(existing);
+      const hueGap = circularHueDistance(hsv.h, existingHsv.h);
+      return colorDistance(color, existing) >= 48 && (hueGap >= 18 || Math.abs(hsv.v - existingHsv.v) >= 0.24);
+    });
+    if (!distinct) continue;
+    selected.push(color);
   }
+
+  if (!selected.length) selected.push(candidates[0].representative);
+
+  // Refine each chosen ink only from nearby core pixels. This prevents pale edge
+  // pixels from dragging gold toward grey or navy toward black/blue-grey.
   return selected.map((seed) => {
+    const seedHsv = rgbToHsv(seed);
     const local: Rgb[] = [];
     for (let index = 0; index < pixels.length; index += step) {
       const pixel = pixels[index];
-      if (colorDistance(pixel, seed) <= 38) local.push(pixel);
+      const hsv = rgbToHsv(pixel);
+      if (colorDistance(pixel, seed) > 34) continue;
+      if (hsv.s >= 0.16 && seedHsv.s >= 0.16 && circularHueDistance(hsv.h, seedHsv.h) > 16) continue;
+      local.push(pixel);
     }
-    return local.length >= 6 ? trimmedRepresentative(local) : seed;
+    return local.length >= 6 ? coreRepresentative(local) : seed;
   });
 }
 
-function trimmedRepresentative(pixels: Rgb[]): Rgb {
+function coreRepresentative(pixels: Rgb[]): Rgb {
+  if (!pixels.length) return { r: 0, g: 0, b: 0 };
   if (pixels.length < 8) return robustMean(pixels);
-  const sorted = pixels.slice().sort((a, b) => luminance(a) - luminance(b));
-  const start = Math.floor(sorted.length * 0.12); const end = Math.max(start + 1, Math.ceil(sorted.length * 0.88));
-  const trimmed = sorted.slice(start, end);
-  return { r: Math.round(trimmed.reduce((s,p)=>s+p.r,0)/trimmed.length), g: Math.round(trimmed.reduce((s,p)=>s+p.g,0)/trimmed.length), b: Math.round(trimmed.reduce((s,p)=>s+p.b,0)/trimmed.length) };
+
+  // Pick the densest central portion in RGB space instead of averaging all edge
+  // shades. Medoid-like selection is stable for compressed logos and scans.
+  const sampleStep = Math.max(1, Math.floor(pixels.length / 180));
+  const sample = pixels.filter((_, index) => index % sampleStep === 0);
+  let best = sample[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const candidate of sample) {
+    let score = 0;
+    for (const other of sample) score += Math.min(90, colorDistance(candidate, other));
+    if (score < bestScore) { bestScore = score; best = candidate; }
+  }
+
+  const local = pixels.filter((pixel) => colorDistance(pixel, best) <= 24);
+  return local.length >= 4 ? robustMean(local) : best;
 }
 
 function supersampleFlatArtwork(source: ImageData, palette: Rgb[], factor: number, options: VectorizeOptions): ImageData {
@@ -158,8 +203,6 @@ function supersampleFlatArtwork(source: ImageData, palette: Rgb[], factor: numbe
 function snapSvgColorsToPalette(svg: string, palette: Rgb[]): string {
   const replaceRgb = (match: string, rText: string, gText: string, bText: string) => {
     const color = { r: Number(rText), g: Number(gText), b: Number(bText) };
-    // Preserve the transparent-background/white trace. Only artwork colors should
-    // be locked back to the palette sampled from the source image.
     if (color.r >= 245 && color.g >= 245 && color.b >= 245) return match;
     const snapped = nearestColor(color, palette);
     return `rgb(${snapped.r},${snapped.g},${snapped.b})`;
@@ -204,6 +247,12 @@ function colorDistance(a:Rgb,b:Rgb):number{const dr=a.r-b.r,dg=a.g-b.g,db=a.b-b.
 function chroma(pixel:Rgb):number{return Math.max(pixel.r,pixel.g,pixel.b)-Math.min(pixel.r,pixel.g,pixel.b);}
 function luminance(pixel:Rgb):number{return 0.2126*pixel.r+0.7152*pixel.g+0.0722*pixel.b;}
 function median(values:number[]):number{const sorted=values.slice().sort((a,b)=>a-b);const middle=Math.floor(sorted.length/2);return sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;}
+function circularHueDistance(a:number,b:number):number{const d=Math.abs(a-b)%360;return Math.min(d,360-d);}
+function rgbToHsv(pixel:Rgb):{h:number;s:number;v:number}{
+  const r=pixel.r/255,g=pixel.g/255,b=pixel.b/255; const max=Math.max(r,g,b),min=Math.min(r,g,b),delta=max-min;
+  let h=0; if(delta!==0){if(max===r)h=60*(((g-b)/delta)%6);else if(max===g)h=60*(((b-r)/delta)+2);else h=60*(((r-g)/delta)+4);} if(h<0)h+=360;
+  return {h,s:max===0?0:delta/max,v:max};
+}
 
 function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors){
   const detail=options.detail/100,smoothing=options.smoothing/100,cleanGeometry=isFlatArtwork(options),logo=options.preset==='logo';
