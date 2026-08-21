@@ -7,7 +7,7 @@ import { validateRasterFileSignature } from './validateInput';
 
 interface Rgb { r: number; g: number; b: number }
 interface ReconstructedArtwork { imageData: ImageData; palette: Rgb[] }
-interface PreparedImage { imageData: ImageData; traceScale: number; traceColors: number }
+interface PreparedImage { imageData: ImageData; traceScale: number; traceColors: number; palette?: Rgb[] }
 
 export class JsVectorEngine implements VectorEngine {
   readonly id = 'imagetracer-js';
@@ -16,8 +16,15 @@ export class JsVectorEngine implements VectorEngine {
     const options = clampOptions(rawOptions);
     const started = performance.now();
     const decoded = await decodeImage(file);
-    const prepared = isFlatArtwork(options) ? prepareFlatArtwork(decoded, options) : { imageData: decoded, traceScale: 1, traceColors: options.colors };
-    const svgRaw = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale, prepared.traceColors));
+    const prepared: PreparedImage = isFlatArtwork(options)
+      ? prepareFlatArtwork(decoded, options)
+      : { imageData: decoded, traceScale: 1, traceColors: options.colors };
+    const traced = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale, prepared.traceColors));
+    // ImageTracer performs its own color quantization even after our source pixels
+    // have been snapped to the detected brand palette. That was visibly shifting
+    // navy toward near-black and gold toward orange. For flat artwork, restore the
+    // traced fills/strokes to the exact colors measured from the uploaded source.
+    const svgRaw = prepared.palette?.length ? snapSvgColorsToPalette(traced, prepared.palette) : traced;
     const svg = assertSafeSvg(sanitizeGeneratedSvg(svgRaw));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
   }
@@ -51,6 +58,7 @@ function prepareFlatArtwork(input: ImageData, options: VectorizeOptions): Prepar
     imageData: supersampleFlatArtwork(reconstructed.imageData, reconstructed.palette, factor, options),
     traceScale: 1 / factor,
     traceColors: Math.max(2, Math.min(6, reconstructed.palette.length + 1)),
+    palette: reconstructed.palette,
   };
 }
 
@@ -147,6 +155,18 @@ function supersampleFlatArtwork(source: ImageData, palette: Rgb[], factor: numbe
   return enlarged;
 }
 
+function snapSvgColorsToPalette(svg: string, palette: Rgb[]): string {
+  const replaceRgb = (match: string, rText: string, gText: string, bText: string) => {
+    const color = { r: Number(rText), g: Number(gText), b: Number(bText) };
+    // Preserve the transparent-background/white trace. Only artwork colors should
+    // be locked back to the palette sampled from the source image.
+    if (color.r >= 245 && color.g >= 245 && color.b >= 245) return match;
+    const snapped = nearestColor(color, palette);
+    return `rgb(${snapped.r},${snapped.g},${snapped.b})`;
+  };
+  return svg.replace(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g, replaceRgb);
+}
+
 function estimateBackground(data: Uint8ClampedArray, width: number, height: number): Rgb {
   const samples: Rgb[] = []; const band = Math.max(1, Math.round(Math.min(width, height) * 0.035));
   const stepX = Math.max(1, Math.floor(width / 80)); const stepY = Math.max(1, Math.floor(height / 80));
@@ -188,5 +208,5 @@ function median(values:number[]):number{const sorted=values.slice().sort((a,b)=>
 function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors){
   const detail=options.detail/100,smoothing=options.smoothing/100,cleanGeometry=isFlatArtwork(options),logo=options.preset==='logo';
   const traceTolerance=logo?Math.max(0.38,1.22-detail*0.72):cleanGeometry?Math.max(0.72,2.05-detail*1.08):Math.max(0.18,2.2-detail*1.9);
-  return {ltres:traceTolerance,qtres:traceTolerance,pathomit:logo?1:cleanGeometry?Math.max(3,Math.round((1-detail)*10)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:cleanGeometry?traceColors:options.colors,mincolorratio:logo?0.0005:cleanGeometry?0.004:0,colorquantcycles:logo?3:cleanGeometry?2:options.colors<=4?2:3,layering:0,strokewidth:0,linefilter:logo?false:cleanGeometry||smoothing>0.65,scale:traceScale,roundcoords:logo?3:cleanGeometry?2:detail>0.8?2:1,viewbox:true,desc:false,blurradius:0,blurdelta:logo?12:cleanGeometry?34:20};
+  return {ltres:traceTolerance,qtres:traceTolerance,pathomit:logo?1:cleanGeometry?Math.max(3,Math.round((1-detail)*10)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:cleanGeometry?traceColors:options.colors,mincolorratio:logo?0.0005:cleanGeometry?0.004:0,colorquantcycles:logo?1:cleanGeometry?2:options.colors<=4?2:3,layering:0,strokewidth:0,linefilter:logo?false:cleanGeometry||smoothing>0.65,scale:traceScale,roundcoords:logo?3:cleanGeometry?2:detail>0.8?2:1,viewbox:true,desc:false,blurradius:0,blurdelta:logo?12:cleanGeometry?34:20};
 }
