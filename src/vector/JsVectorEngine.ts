@@ -110,13 +110,22 @@ function traceLogoLayers(imageData:ImageData,palette:Rgb[],baseOptions:Record<st
   const {width,height}=imageData; let root=''; const layers:string[]=[];
   palette.forEach((color,index)=>{
     const layer=new ImageData(width,height); const src=imageData.data,dst=layer.data;
+    // ImageTracer treats fully transparent pixels unpredictably during quantization. Use an opaque white
+    // tracing background, then keep only the explicitly recolored foreground paths below.
+    for(let i=0;i<dst.length;i+=4){dst[i]=255;dst[i+1]=255;dst[i+2]=255;dst[i+3]=255;}
     for(let i=0;i<src.length;i+=4){if(src[i+3]<10)continue;const current={r:src[i],g:src[i+1],b:src[i+2]};if(nearestIndex(current,palette)!==index)continue;dst[i]=color.r;dst[i+1]=color.g;dst[i+2]=color.b;dst[i+3]=255;}
-    const layerOptions = {...baseOptions,numberofcolors:2,colorquantcycles:1,pal:[{r:255,g:255,b:255,a:0},{r:color.r,g:color.g,b:color.b,a:255}]} as Parameters<typeof ImageTracer.imagedataToSVG>[1];
+    const layerOptions = {...baseOptions,numberofcolors:2,colorquantcycles:1,colorsampling:0} as Parameters<typeof ImageTracer.imagedataToSVG>[1];
     const layerSvg=ImageTracer.imagedataToSVG(layer,layerOptions);
     if(!root)root=layerSvg.match(/<svg\b[^>]*>/)?.[0]??`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">`;
     const pathTags=layerSvg.match(/<path\b[^>]*\/>|<path\b[^>]*>[\s\S]*?<\/path>/g)??[];
-    const rgb=`rgb(${color.r},${color.g},${color.b})`;
-    for(const tag of pathTags){if(tag.includes(rgb))layers.push(tag);}
+    for(const tag of pathTags){
+      const fill=tag.match(/fill="rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)"/);
+      if(!fill)continue;
+      const tracedColor={r:Number(fill[1]),g:Number(fill[2]),b:Number(fill[3])};
+      // White is only the temporary tracing background. Any non-white path belongs to this color layer.
+      if(tracedColor.r>245&&tracedColor.g>245&&tracedColor.b>245)continue;
+      layers.push(tag.replace(/fill="rgb\([^\"]+\)"/,`fill="rgb(${color.r},${color.g},${color.b})"`));
+    }
   });
   return `${root}${layers.join('')}</svg>`;
 }
