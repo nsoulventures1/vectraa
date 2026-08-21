@@ -17,7 +17,10 @@ export class JsVectorEngine implements VectorEngine {
     const started = performance.now();
     const decoded = await decodeImage(file);
     const prepared: PreparedImage = isFlatArtwork(options) ? prepareFlatArtwork(decoded, options) : { imageData: decoded, traceScale: 1, traceColors: options.colors };
-    const traced = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.traceScale, prepared.traceColors, prepared.palette));
+    const traceOptions = toTraceOptions(options, prepared.traceScale, prepared.traceColors, prepared.palette);
+    const traced = options.preset === 'logo' && prepared.palette?.length
+      ? traceLogoLayers(prepared.imageData, prepared.palette, traceOptions)
+      : ImageTracer.imagedataToSVG(prepared.imageData, traceOptions);
     const svgRaw = prepared.palette?.length ? snapSvgColorsToPalette(traced, prepared.palette) : traced;
     const svg = assertSafeSvg(sanitizeGeneratedSvg(svgRaw));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
@@ -103,6 +106,20 @@ function supersampleFlatArtwork(source:ImageData,palette:Rgb[],factor:number,opt
   return enlarged;
 }
 
+function traceLogoLayers(imageData:ImageData,palette:Rgb[],baseOptions:Record<string,unknown>):string{
+  const {width,height}=imageData; let root=''; const layers:string[]=[];
+  palette.forEach((color,index)=>{
+    const layer=new ImageData(width,height); const src=imageData.data,dst=layer.data;
+    for(let i=0;i<src.length;i+=4){if(src[i+3]<10)continue;const current={r:src[i],g:src[i+1],b:src[i+2]};if(nearestIndex(current,palette)!==index)continue;dst[i]=color.r;dst[i+1]=color.g;dst[i+2]=color.b;dst[i+3]=255;}
+    const layerSvg=ImageTracer.imagedataToSVG(layer,{...baseOptions,numberofcolors:2,colorquantcycles:1,pal:[{r:255,g:255,b:255,a:0},{r:color.r,g:color.g,b:color.b,a:255}]});
+    if(!root)root=layerSvg.match(/<svg\b[^>]*>/)?.[0]??`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">`;
+    const pathTags=layerSvg.match(/<path\b[^>]*\/>|<path\b[^>]*>[\s\S]*?<\/path>/g)??[];
+    const rgb=`rgb(${color.r},${color.g},${color.b})`;
+    for(const tag of pathTags){if(tag.includes(rgb))layers.push(tag);}
+  });
+  return `${root}${layers.join('')}</svg>`;
+}
+
 function snapSvgColorsToPalette(svg:string,palette:Rgb[]):string{return svg.replace(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g,(match,r,g,b)=>{const c={r:Number(r),g:Number(g),b:Number(b)};if(c.r>=245&&c.g>=245&&c.b>=245)return match;const s=nearestColor(c,palette);return`rgb(${s.r},${s.g},${s.b})`;});}
 
 function estimateBackground(data:Uint8ClampedArray,width:number,height:number):Rgb{const samples:Rgb[]=[];const band=Math.max(1,Math.round(Math.min(width,height)*0.04)),sx=Math.max(1,Math.floor(width/90)),sy=Math.max(1,Math.floor(height/90));for(let y=0;y<height;y+=sy)for(let x=0;x<width;x+=sx){if(x>=band&&x<width-band&&y>=band&&y<height-band)continue;const i=(y*width+x)*4;if(data[i+3]<32)continue;samples.push({r:data[i],g:data[i+1],b:data[i+2]});}if(!samples.length)return{r:255,g:255,b:255};samples.sort((a,b)=>luminance(b)-luminance(a));const bright=samples.slice(0,Math.max(4,Math.floor(samples.length*.7)));return{r:Math.round(median(bright.map(p=>p.r))),g:Math.round(median(bright.map(p=>p.g))),b:Math.round(median(bright.map(p=>p.b)))};}
@@ -111,7 +128,7 @@ function cleanMask(mask:Uint8Array,width:number,height:number,preserve=false):vo
 function removeTinyComponents(mask:Uint8Array,width:number,height:number,minimum:number):void{const visited=new Uint8Array(mask.length),queue=new Int32Array(mask.length);for(let start=0;start<mask.length;start+=1){if(!mask[start]||visited[start])continue;let head=0,tail=0;queue[tail++]=start;visited[start]=1;const component:number[]=[];while(head<tail){const p=queue[head++];component.push(p);const x=p%width,y=Math.floor(p/width);for(let dy=-1;dy<=1;dy+=1)for(let dx=-1;dx<=1;dx+=1){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=width||ny>=height)continue;const np=ny*width+nx;if(!mask[np]||visited[np])continue;visited[np]=1;queue[tail++]=np;}}if(component.length<minimum)for(const p of component)mask[p]=0;}}
 function robustMean(pixels:Rgb[]):Rgb{return pixels.length?{r:Math.round(median(pixels.map(p=>p.r))),g:Math.round(median(pixels.map(p=>p.g))),b:Math.round(median(pixels.map(p=>p.b)))}:{r:0,g:0,b:0};}
 function nearestColor(pixel:Rgb,palette:Rgb[]):Rgb{return palette[nearestIndex(pixel,palette)];}function nearestIndex(pixel:Rgb,palette:Rgb[]):number{let best=0,d=Infinity;for(let i=0;i<palette.length;i++){const n=colorDistance(pixel,palette[i]);if(n<d){d=n;best=i;}}return best;}
-function colorDistance(a:Rgb,b:Rgb):number{const dr=a.r-b.r,dg=a.g-b.g,db=a.b-b.b;return Math.sqrt(dr*dr*.9+dg*dg*1.25+db*db*.75);}function chroma(p:Rgb):number{return Math.max(p.r,p.g,p.b)-Math.min(p.r,p.g,p.b);}function luminance(p:Rgb):number{return .2126*p.r+.7152*p.g+.0722*p.b;}function median(v:number[]):number{const s=v.slice().sort((a,b)=>a-b),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}function circularHueDistance(a:number,b:number):number{const d=Math.abs(a-b)%360;return Math.min(d,360-d);}
+function colorDistance(a:Rgb,b:Rgb):number{const dr=a.r-b.r,dg=a.g-b.g,db=a.b-b.b;return Math.sqrt(dr*dr*.9+dg*dg*1.25+db*db*.75);}function luminance(p:Rgb):number{return .2126*p.r+.7152*p.g+.0722*p.b;}function median(v:number[]):number{const s=v.slice().sort((a,b)=>a-b),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}function circularHueDistance(a:number,b:number):number{const d=Math.abs(a-b)%360;return Math.min(d,360-d);}
 function rgbToHsv(p:Rgb):{h:number;s:number;v:number}{const r=p.r/255,g=p.g/255,b=p.b/255,max=Math.max(r,g,b),min=Math.min(r,g,b),delta=max-min;let h=0;if(delta){if(max===r)h=60*(((g-b)/delta)%6);else if(max===g)h=60*((b-r)/delta+2);else h=60*((r-g)/delta+4);}if(h<0)h+=360;return{h,s:max===0?0:delta/max,v:max};}
 
-function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors,palette?:Rgb[]){const detail=options.detail/100,clean=isFlatArtwork(options),logo=options.preset==='logo';const tolerance=logo?Math.max(.28,.92-detail*.52):clean?Math.max(.65,1.8-detail):Math.max(.18,2.2-detail*1.9);const pal=palette?.length?[{r:255,g:255,b:255,a:0},...palette.map(c=>({r:c.r,g:c.g,b:c.b,a:255}))]:undefined;return{ltres:tolerance,qtres:tolerance,pathomit:logo?0:clean?Math.max(2,Math.round((1-detail)*8)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:clean?traceColors:options.colors,mincolorratio:logo?.00008:clean?.003:0,colorquantcycles:1,layering:0,strokewidth:0,linefilter:logo?false:clean,scale:traceScale,roundcoords:logo?5:clean?3:2,viewbox:true,desc:false,blurradius:0,blurdelta:logo?6:clean?26:20,...(pal?{pal}: {})};}
+function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors,palette?:Rgb[]){const detail=options.detail/100,clean=isFlatArtwork(options),logo=options.preset==='logo';const tolerance=logo?Math.max(.24,.82-detail*.46):clean?Math.max(.65,1.8-detail):Math.max(.18,2.2-detail*1.9);const pal=palette?.length?[{r:255,g:255,b:255,a:0},...palette.map(c=>({r:c.r,g:c.g,b:c.b,a:255}))]:undefined;return{ltres:tolerance,qtres:tolerance,pathomit:logo?0:clean?Math.max(2,Math.round((1-detail)*8)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:clean?traceColors:options.colors,mincolorratio:logo?.00005:clean?.003:0,colorquantcycles:1,layering:0,strokewidth:0,linefilter:logo?false:clean,scale:traceScale,roundcoords:logo?5:clean?3:2,viewbox:true,desc:false,blurradius:0,blurdelta:logo?4:clean?26:20,...(pal?{pal}: {})};}
