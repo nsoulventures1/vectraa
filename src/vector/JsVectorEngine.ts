@@ -91,75 +91,99 @@ function buildAdaptiveBrandPalette(pixels: Rgb[], maxColors: number): Rgb[] {
   if (!pixels.length) return [];
   if (maxColors <= 1) return [robustMean(pixels)];
 
-  interface HueBin { pixels: Rgb[]; weight: number; representative: Rgb }
-  const bins = new Map<string, Rgb[]>();
-  const step = Math.max(1, Math.floor(pixels.length / 50000));
+  // Build the logo palette by hue family first, not by RGB density. This is crucial
+  // for brand marks where a small accent (gold/red/green) occupies far fewer pixels
+  // than the main navy/black ink. Compression shades may be numerous, but they stay
+  // inside the same hue family and therefore cannot crowd out a true accent colour.
+  const step = Math.max(1, Math.floor(pixels.length / 60000));
+  const sampled: Rgb[] = [];
+  for (let index = 0; index < pixels.length; index += step) sampled.push(pixels[index]);
 
-  for (let index = 0; index < pixels.length; index += step) {
-    const pixel = pixels[index];
+  interface Family { pixels: Rgb[]; weight: number; hue: number; representative: Rgb }
+  const families = new Map<number, Rgb[]>();
+  const neutral: Rgb[] = [];
+
+  for (const pixel of sampled) {
     const hsv = rgbToHsv(pixel);
     const lum = luminance(pixel) / 255;
 
-    // Reject pale antialias/white contamination from palette discovery. True dark
-    // brand colors are still kept even when their saturation is modest.
-    const isCore = hsv.s >= 0.20 || hsv.v <= 0.55 || lum <= 0.52;
-    if (!isCore) continue;
+    // Very pale pixels are almost always antialias/background contamination.
+    if (hsv.v > 0.92 && hsv.s < 0.18) continue;
 
-    const hueBucket = hsv.s < 0.12 ? -1 : Math.floor(hsv.h / 15);
-    const satBucket = Math.min(3, Math.floor(hsv.s * 4));
-    const valBucket = Math.min(3, Math.floor(hsv.v * 4));
-    const key = `${hueBucket}:${satBucket}:${valBucket}`;
-    const bucket = bins.get(key) ?? [];
-    bucket.push(pixel);
-    bins.set(key, bucket);
+    if (hsv.s < 0.16) {
+      if (lum < 0.72) neutral.push(pixel);
+      continue;
+    }
+
+    // 12-degree hue bins are narrow enough to separate navy from gold while broad
+    // enough to collapse JPEG edge shades. Adjacent bins are merged below.
+    const bucket = Math.floor(hsv.h / 12);
+    const list = families.get(bucket) ?? [];
+    list.push(pixel);
+    families.set(bucket, list);
   }
 
-  const candidates: HueBin[] = [...bins.values()]
-    .filter((bucket) => bucket.length >= 2)
-    .map((bucket) => {
-      const representative = coreRepresentative(bucket);
-      const hsv = rgbToHsv(representative);
-      const darknessBonus = 1 + Math.max(0, 0.58 - hsv.v) * 1.4;
-      const saturationBonus = 1 + hsv.s * 1.6;
-      return { pixels: bucket, representative, weight: bucket.length * darknessBonus * saturationBonus };
-    })
-    .sort((a, b) => b.weight - a.weight);
-
-  if (!candidates.length) return [robustMean(pixels)];
+  const rawFamilies = [...families.entries()].map(([bucket, familyPixels]) => {
+    const representative = saturatedRepresentative(familyPixels);
+    const hsv = rgbToHsv(representative);
+    const meanSaturation = familyPixels.reduce((sum, pixel) => sum + rgbToHsv(pixel).s, 0) / familyPixels.length;
+    const weight = familyPixels.length * (0.7 + meanSaturation * 1.9);
+    return { pixels: familyPixels, weight, hue: bucket * 12 + 6, representative };
+  }).sort((a, b) => b.weight - a.weight);
 
   const selected: Rgb[] = [];
-  for (const candidate of candidates) {
-    if (selected.length >= maxColors) break;
-    const color = candidate.representative;
-    const hsv = rgbToHsv(color);
+  const selectedHues: number[] = [];
+  const minimumFamilySize = Math.max(2, Math.floor(sampled.length * 0.0015));
 
-    // Require genuinely distinct color identity, not just a lighter/darker antialias
-    // version of an already selected ink.
-    const distinct = selected.every((existing) => {
-      const existingHsv = rgbToHsv(existing);
-      const hueGap = circularHueDistance(hsv.h, existingHsv.h);
-      return colorDistance(color, existing) >= 48 && (hueGap >= 18 || Math.abs(hsv.v - existingHsv.v) >= 0.24);
-    });
-    if (!distinct) continue;
-    selected.push(color);
+  for (const family of rawFamilies) {
+    if (selected.length >= maxColors) break;
+    if (family.pixels.length < minimumFamilySize) continue;
+
+    const hsv = rgbToHsv(family.representative);
+    const isNewHue = selectedHues.every((hue) => circularHueDistance(hue, hsv.h) >= 24);
+    if (!isNewHue) continue;
+
+    selected.push(family.representative);
+    selectedHues.push(hsv.h);
   }
 
-  if (!selected.length) selected.push(candidates[0].representative);
-
-  // Refine each chosen ink only from nearby core pixels. This prevents pale edge
-  // pixels from dragging gold toward grey or navy toward black/blue-grey.
-  return selected.map((seed) => {
-    const seedHsv = rgbToHsv(seed);
-    const local: Rgb[] = [];
-    for (let index = 0; index < pixels.length; index += step) {
-      const pixel = pixels[index];
-      const hsv = rgbToHsv(pixel);
-      if (colorDistance(pixel, seed) > 34) continue;
-      if (hsv.s >= 0.16 && seedHsv.s >= 0.16 && circularHueDistance(hsv.h, seedHsv.h) > 16) continue;
-      local.push(pixel);
-    }
-    return local.length >= 6 ? coreRepresentative(local) : seed;
+  // If a real warm accent exists, explicitly reserve it. Small gold/orange/red
+  // elements are common in brand logos and must not disappear behind a dominant blue.
+  const warmPixels = sampled.filter((pixel) => {
+    const hsv = rgbToHsv(pixel);
+    return hsv.s >= 0.24 && hsv.v >= 0.28 && (hsv.h <= 75 || hsv.h >= 345);
   });
+  if (warmPixels.length >= minimumFamilySize) {
+    const warm = saturatedRepresentative(warmPixels);
+    const warmHsv = rgbToHsv(warm);
+    const alreadyCovered = selected.some((color) => circularHueDistance(rgbToHsv(color).h, warmHsv.h) < 22);
+    if (!alreadyCovered) {
+      if (selected.length >= maxColors) selected[selected.length - 1] = warm;
+      else selected.push(warm);
+    }
+  }
+
+  // Dark neutral inks (black/charcoal) are legitimate in many logos. Add one only
+  // when it is materially represented and not already covered by a dark selected ink.
+  if (neutral.length >= minimumFamilySize) {
+    const neutralColor = coreRepresentative(neutral);
+    const alreadyCovered = selected.some((color) => colorDistance(color, neutralColor) < 44);
+    if (!alreadyCovered && selected.length < maxColors) selected.push(neutralColor);
+  }
+
+  if (!selected.length) return [coreRepresentative(sampled)];
+
+  return selected.slice(0, maxColors);
+}
+
+function saturatedRepresentative(pixels: Rgb[]): Rgb {
+  if (!pixels.length) return { r: 0, g: 0, b: 0 };
+  const ranked = pixels
+    .map((pixel) => ({ pixel, hsv: rgbToHsv(pixel) }))
+    .filter(({ hsv }) => hsv.v < 0.96)
+    .sort((a, b) => (b.hsv.s * 0.72 + (1 - Math.abs(b.hsv.v - 0.58)) * 0.28) - (a.hsv.s * 0.72 + (1 - Math.abs(a.hsv.v - 0.58)) * 0.28));
+  const core = ranked.slice(0, Math.max(4, Math.ceil(ranked.length * 0.45))).map(({ pixel }) => pixel);
+  return coreRepresentative(core.length ? core : pixels);
 }
 
 function coreRepresentative(pixels: Rgb[]): Rgb {
@@ -257,5 +281,5 @@ function rgbToHsv(pixel:Rgb):{h:number;s:number;v:number}{
 function toTraceOptions(options:VectorizeOptions,traceScale=1,traceColors=options.colors){
   const detail=options.detail/100,smoothing=options.smoothing/100,cleanGeometry=isFlatArtwork(options),logo=options.preset==='logo';
   const traceTolerance=logo?Math.max(0.38,1.22-detail*0.72):cleanGeometry?Math.max(0.72,2.05-detail*1.08):Math.max(0.18,2.2-detail*1.9);
-  return {ltres:traceTolerance,qtres:traceTolerance,pathomit:logo?1:cleanGeometry?Math.max(3,Math.round((1-detail)*10)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:cleanGeometry?traceColors:options.colors,mincolorratio:logo?0.0005:cleanGeometry?0.004:0,colorquantcycles:logo?1:cleanGeometry?2:options.colors<=4?2:3,layering:0,strokewidth:0,linefilter:logo?false:cleanGeometry||smoothing>0.65,scale:traceScale,roundcoords:logo?3:cleanGeometry?2:detail>0.8?2:1,viewbox:true,desc:false,blurradius:0,blurdelta:logo?12:cleanGeometry?34:20};
+  return {ltres:traceTolerance,qtres:traceTolerance,pathomit:logo?0:cleanGeometry?Math.max(3,Math.round((1-detail)*10)):Math.max(0,Math.round((1-detail)*12)),rightangleenhance:logo||options.preset==='line-art',colorsampling:0,numberofcolors:cleanGeometry?traceColors:options.colors,mincolorratio:logo?0.0002:cleanGeometry?0.004:0,colorquantcycles:logo?1:cleanGeometry?2:options.colors<=4?2:3,layering:0,strokewidth:0,linefilter:logo?false:cleanGeometry||smoothing>0.65,scale:traceScale,roundcoords:logo?4:cleanGeometry?2:detail>0.8?2:1,viewbox:true,desc:false,blurradius:0,blurdelta:logo?12:cleanGeometry?34:20};
 }
