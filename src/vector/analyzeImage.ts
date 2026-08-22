@@ -1,3 +1,4 @@
+import { decodeRaster } from './rasterDecode';
 import type { ImageAnalysis, VectorPreset } from './types';
 import { validateRasterFile } from './validateInput';
 
@@ -17,47 +18,55 @@ export interface ImageSignals {
 
 export async function analyzeImage(file: File): Promise<ImageAnalysis> {
   validateRasterFile(file);
-  const bitmap = await createImageBitmap(file);
+  // Decode once at upload time. decodeRaster caches this ImageData for the same File,
+  // so vectorization later uses these proven-good pixels without another browser decode.
+  const decoded = await decodeRaster(file);
+  const originalWidth = decoded.width;
+  const originalHeight = decoded.height;
 
-  try {
-    const scale = Math.min(1, SAMPLE_SIZE / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('Vectraa could not inspect this image.');
+  const scale = Math.min(1, SAMPLE_SIZE / Math.max(originalWidth, originalHeight));
+  const width = Math.max(1, Math.round(originalWidth * scale));
+  const height = Math.max(1, Math.round(originalHeight * scale));
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = originalWidth;
+  sourceCanvas.height = originalHeight;
+  const sourceContext = sourceCanvas.getContext('2d');
+  if (!sourceContext) throw new Error('Vectraa could not inspect this image.');
+  sourceContext.putImageData(decoded, 0, 0);
 
-    context.drawImage(bitmap, 0, 0, width, height);
-    const pixels = context.getImageData(0, 0, width, height).data;
-    const signals = measureSignals(pixels, width, height, bitmap.width, bitmap.height);
-    const likelyKind = classifyImageSignals(signals);
-    const warnings: string[] = [];
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Vectraa could not inspect this image.');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(sourceCanvas, 0, 0, width, height);
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const signals = measureSignals(pixels, width, height, originalWidth, originalHeight);
+  const likelyKind = classifyImageSignals(signals);
+  const warnings: string[] = [];
 
-    const megapixels = (bitmap.width * bitmap.height) / 1_000_000;
-    if (megapixels > 12) warnings.push('Large source image; conversion may take longer.');
-    if (signals.colorComplexity > 0.8 && likelyKind !== 'logo') warnings.push('Many foreground color transitions detected; expect a larger SVG.');
-    if (signals.edgeDensity > 0.42 && likelyKind !== 'logo') warnings.push('Very dense detail detected; some simplification may improve editability.');
+  const megapixels = (originalWidth * originalHeight) / 1_000_000;
+  if (megapixels > 12) warnings.push('Large source image; conversion may take longer.');
+  if (signals.colorComplexity > 0.8 && likelyKind !== 'logo') warnings.push('Many foreground color transitions detected; expect a larger SVG.');
+  if (signals.edgeDensity > 0.42 && likelyKind !== 'logo') warnings.push('Very dense detail detected; some simplification may improve editability.');
 
-    return {
-      width: bitmap.width,
-      height: bitmap.height,
-      megapixels,
-      hasAlpha: signals.hasAlpha,
-      likelyKind,
-      confidence: recommendationConfidence(signals, likelyKind),
-      signals: {
-        edgeDensity: signals.edgeDensity,
-        colorComplexity: signals.colorComplexity,
-        lightBackground: signals.lightBackground,
-        alphaCoverage: signals.alphaCoverage,
-      },
-      warnings,
-    };
-  } finally {
-    bitmap.close();
-  }
+  return {
+    width: originalWidth,
+    height: originalHeight,
+    megapixels,
+    hasAlpha: signals.hasAlpha,
+    likelyKind,
+    confidence: recommendationConfidence(signals, likelyKind),
+    signals: {
+      edgeDensity: signals.edgeDensity,
+      colorComplexity: signals.colorComplexity,
+      lightBackground: signals.lightBackground,
+      alphaCoverage: signals.alphaCoverage,
+    },
+    warnings,
+  };
 }
 
 export function classifyImageSignals(signals: ImageSignals): VectorPreset {
@@ -78,10 +87,6 @@ export function classifyImageSignals(signals: ImageSignals): VectorPreset {
     saturation < 0.22;
   if (lineArtLike) return 'line-art';
 
-  // Scanned stamps and JPEG logos are deceptively complex: antialiasing, paper
-  // texture and compression can create hundreds of shades even when the intended
-  // artwork has only one or two inks. Detect the composition (light page + compact
-  // dark/saturated artwork) before falling back to raw color-complexity metrics.
   const scannedBrandArt =
     lightBackground > 0.38 &&
     darkInk > 0.008 && darkInk < 0.48 &&
