@@ -26,7 +26,13 @@ export function recommendedLogoRescueOptions(analysis: ImageAnalysis): LogoRescu
 }
 
 export async function preprocessLogoForRescue(file: File, options: LogoRescueOptions): Promise<File> {
-  const bitmap = await createImageBitmap(file);
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error('Vectraa could not decode the original logo for rescue.');
+  }
+
   try {
     const maxDimension = 1800;
     const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
@@ -58,7 +64,15 @@ export async function preprocessLogoForRescue(file: File, options: LogoRescueOpt
     const blob = await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Vectraa could not create the cleaned logo.')), 'image/png');
     });
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}-rescued-source.png`, { type: 'image/png' });
+
+    // IMPORTANT: Blob.type is not reliable enough to use as the File.type passed
+    // into the next validation/decode stage. Explicitly declare the generated
+    // rescue asset as PNG so Chrome/Cloudflare builds do not hand the vector engine
+    // an empty/ambiguous MIME type after canvas.toBlob().
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}-rescued-source.png`, {
+      type: 'image/png',
+      lastModified: Date.now(),
+    });
   } finally {
     bitmap.close();
   }
@@ -84,15 +98,11 @@ function applyContrastAndQuantization(data: Uint8ClampedArray<ArrayBuffer>, opti
     const chroma = max - min;
     const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-    // Remove white paper and JPEG halos aggressively, but do not erase pale
-    // intentional colors merely because one channel is bright.
     if (options.removeNearWhiteBackground && luminance > 236 && chroma < 28) {
       data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = 0;
       continue;
     }
 
-    // Snap almost-white neutral anti-alias pixels to transparency as well. This is
-    // the main source of the blue/grey confetti visible around stamp edges.
     if (options.removeNearWhiteBackground && luminance > 224 && chroma < 16) {
       data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = 0;
       continue;
