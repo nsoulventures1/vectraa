@@ -38,24 +38,32 @@ export class JsVectorEngine implements VectorEngine {
   }
 }
 
+/**
+ * Decode from an immutable byte snapshot rather than handing the same File object
+ * through several independent browser decoders. Analysis proves the upload is valid;
+ * this path makes conversion deterministic in Chrome by trying Blob URL decoding first
+ * and createImageBitmap from fresh bytes second.
+ */
 async function decodeImage(file: File): Promise<ImageData> {
-  // createImageBitmap is fast but Chrome can intermittently reject freshly generated
-  // canvas PNG Files. Fall back to the browser's HTMLImageElement decoder instead of
-  // aborting a valid Logo Rescue conversion.
+  const bytes = await file.arrayBuffer();
+  if (!bytes.byteLength) throw new Error('The source image is empty.');
+  const mime = file.type || 'application/octet-stream';
+
   try {
-    const bitmap = await createImageBitmap(file);
+    return await decodeBytesWithHtmlImage(bytes, mime);
+  } catch (imageError) {
     try {
-      return renderDrawable(bitmap, bitmap.width, bitmap.height);
-    } finally {
-      bitmap.close();
-    }
-  } catch (bitmapError) {
-    try {
-      return await decodeWithHtmlImage(file);
-    } catch (imageError) {
-      const bitmapMessage = bitmapError instanceof Error ? bitmapError.message : 'createImageBitmap failed';
+      const blob = new Blob([bytes.slice(0)], { type: mime });
+      const bitmap = await createImageBitmap(blob);
+      try {
+        return renderDrawable(bitmap, bitmap.width, bitmap.height);
+      } finally {
+        bitmap.close();
+      }
+    } catch (bitmapError) {
       const imageMessage = imageError instanceof Error ? imageError.message : 'HTML image decode failed';
-      throw new Error(`The source image could not be decoded (${bitmapMessage}; fallback: ${imageMessage}).`);
+      const bitmapMessage = bitmapError instanceof Error ? bitmapError.message : 'createImageBitmap failed';
+      throw new Error(`The source image could not be decoded (HTML decoder: ${imageMessage}; bitmap decoder: ${bitmapMessage}).`);
     }
   }
 }
@@ -76,16 +84,22 @@ function renderDrawable(source: CanvasImageSource, sourceWidth: number, sourceHe
   return context.getImageData(0, 0, width, height);
 }
 
-async function decodeWithHtmlImage(file: File): Promise<ImageData> {
-  const url = URL.createObjectURL(file);
+async function decodeBytesWithHtmlImage(bytes: ArrayBuffer, mime: string): Promise<ImageData> {
+  const blob = new Blob([bytes.slice(0)], { type: mime });
+  const url = URL.createObjectURL(blob);
   try {
     const image = new Image();
-    image.decoding = 'sync';
-    image.src = url;
-    await new Promise<void>((resolve, reject) => {
+    image.decoding = 'async';
+    const loaded = new Promise<void>((resolve, reject) => {
       image.onload = () => resolve();
-      image.onerror = () => reject(new Error('browser image decoder rejected the generated raster'));
+      image.onerror = () => reject(new Error('browser image decoder rejected the source bytes'));
     });
+    image.src = url;
+    await loaded;
+    // decode() is useful when available but onload is the compatibility authority.
+    if (typeof image.decode === 'function') {
+      try { await image.decode(); } catch { /* already loaded; continue */ }
+    }
     const width = image.naturalWidth || image.width;
     const height = image.naturalHeight || image.height;
     if (!width || !height) throw new Error('decoded image has zero dimensions');
