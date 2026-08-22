@@ -15,23 +15,44 @@ export class JsVectorEngine implements VectorEngine {
     await validateRasterFileSignature(file);
     const options = clampOptions(rawOptions);
     const started = performance.now();
-    // Analysis and conversion now consume the exact same cached pixel snapshot.
-    // A file that was successfully analyzed is never decoded a second time here.
+    // Analysis and conversion consume the exact same cached pixel snapshot.
     const decoded = await decodeRaster(file);
 
     if (options.preset === 'logo') {
-      const result = await vectorizeLogoHighFidelity(decoded, options);
-      const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
-      const structural = inspectSvg(svg);
-      return {
-        svg,
-        elapsedMs: Math.round(performance.now() - started),
-        quality: {
-          ...structural,
-          score: Math.min(structural.score, result.quality.score),
-          warnings: [...new Set([...structural.warnings, ...result.quality.warnings])],
-        },
-      };
+      try {
+        const result = await vectorizeLogoHighFidelity(decoded, options);
+        const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
+        const structural = inspectSvg(svg);
+        return {
+          svg,
+          elapsedMs: Math.round(performance.now() - started),
+          quality: {
+            ...structural,
+            score: Math.min(structural.score, result.quality.score),
+            warnings: [...new Set([...structural.warnings, ...result.quality.warnings])],
+          },
+        };
+      } catch (error) {
+        // The high-fidelity pipeline performs an internal raster check of its generated
+        // SVG. Chromium can reject createImageBitmap(svgBlob) with
+        // "The source image could not be decoded" even though the SVG itself is valid.
+        // A verification/rendering failure must never discard a successfully decoded
+        // source image or leave the user with no vector. Fall back to the proven generic
+        // tracer for this pass while keeping the failure visible as a quality warning.
+        const fallback = traceGeneric(decoded, options);
+        const svg = assertSafeSvg(sanitizeGeneratedSvg(fallback));
+        const structural = inspectSvg(svg);
+        const reason = error instanceof Error ? error.message : 'high-fidelity logo verification failed';
+        return {
+          svg,
+          elapsedMs: Math.round(performance.now() - started),
+          quality: {
+            ...structural,
+            score: Math.min(structural.score, 82),
+            warnings: [...new Set([...structural.warnings, `Logo fidelity verification was unavailable (${reason}); a safe fallback trace was returned.`])],
+          },
+        };
+      }
     }
 
     const prepared = prepareGenericArtwork(decoded, options);
@@ -39,6 +60,11 @@ export class JsVectorEngine implements VectorEngine {
     const svg = assertSafeSvg(sanitizeGeneratedSvg(traced));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
   }
+}
+
+function traceGeneric(input: ImageData, options: VectorizeOptions): string {
+  const prepared = prepareGenericArtwork(input, options);
+  return ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.scale));
 }
 
 function prepareGenericArtwork(input: ImageData, options: VectorizeOptions): { imageData: ImageData; scale: number } {
