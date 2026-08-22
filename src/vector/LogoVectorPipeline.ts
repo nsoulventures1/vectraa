@@ -5,7 +5,8 @@ import { inspectSvg } from './quality';
 interface Rgb { r: number; g: number; b: number }
 interface Lab { l: number; a: number; b: number }
 interface PaletteColor { rgb: Rgb; lab: Lab; count: number }
-interface LayerSplit { macro: Uint8Array; micro: Uint8Array; microCount: number }
+interface Component { pixels: number[]; minX: number; minY: number; maxX: number; maxY: number; area: number }
+interface LayerSplit { macro: Uint8Array; micro: Component[] }
 
 export interface LogoPipelineResult {
   svg: string;
@@ -16,12 +17,11 @@ export interface LogoPipelineResult {
 /**
  * Dedicated logo pipeline.
  *
- * Brand colours are learned from source pixels and then frozen. Geometry is
- * traced from binary masks so ImageTracer cannot re-quantise those colours.
- * Small disconnected components (lettering, rules, TM marks and other fine
- * logo details) are traced independently with tighter tolerances than large
- * emblem geometry. This prevents a single global simplification setting from
- * damaging typography while keeping circles and large marks smooth.
+ * Brand colours are learned from source pixels and then frozen. Geometry is traced
+ * from binary masks so ImageTracer cannot re-quantise those colours. Small connected
+ * components are traced independently inside tight local canvases; this is important
+ * for fine typography because a 5px trademark or thin tagline letter should not be
+ * simplified using tolerances derived from a 1254px-wide logo canvas.
  */
 export async function vectorizeLogoHighFidelity(source: ImageData, options: VectorizeOptions): Promise<LogoPipelineResult> {
   const background = estimateBackground(source);
@@ -45,8 +45,8 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
     if (hasForeground(split.macro)) {
       paths.push(...traceBinaryLayer(split.macro, source.width, source.height, palette[index].rgb, options, false));
     }
-    if (hasForeground(split.micro)) {
-      paths.push(...traceBinaryLayer(split.micro, source.width, source.height, palette[index].rgb, options, true));
+    for (const component of split.micro) {
+      paths.push(...traceMicroComponent(component, source.width, palette[index].rgb, options));
     }
   }
 
@@ -157,34 +157,26 @@ function preserveAndCleanLayer(mask: Uint8Array, width: number, height: number):
   removeComponentsSmallerThan(mask, width, height, 2);
 }
 
-/** Split one colour layer by connected-component scale.
- *
- * The thresholds are relative to the uploaded artwork, not hard-coded pixels.
- * A component is considered micro-detail when it is small in area OR narrow in
- * one dimension. That catches VENTURES/taglines/rules/TM marks without forcing
- * the large circular emblem through the typography tracer.
- */
 function splitMacroAndMicro(mask: Uint8Array, width: number, height: number): LayerSplit {
   const macro = new Uint8Array(mask.length);
-  const micro = new Uint8Array(mask.length);
+  const micro: Component[] = [];
   const visited = new Uint8Array(mask.length);
   const queue = new Int32Array(mask.length);
   const imageArea = width * height;
   const maxMicroArea = Math.max(12, imageArea * 0.0045);
   const maxMicroWidth = Math.max(4, width * 0.14);
   const maxMicroHeight = Math.max(4, height * 0.085);
-  let microCount = 0;
 
   for (let start = 0; start < mask.length; start += 1) {
     if (!mask[start] || visited[start]) continue;
     let head = 0, tail = 0;
     queue[tail++] = start; visited[start] = 1;
-    const component: number[] = [];
+    const pixels: number[] = [];
     let minX = width, minY = height, maxX = 0, maxY = 0;
 
     while (head < tail) {
       const p = queue[head++];
-      component.push(p);
+      pixels.push(p);
       const x = p % width, y = Math.floor(p / width);
       if (x < minX) minX = x; if (x > maxX) maxX = x;
       if (y < minY) minY = y; if (y > maxY) maxY = y;
@@ -200,14 +192,67 @@ function splitMacroAndMicro(mask: Uint8Array, width: number, height: number): La
 
     const boxWidth = maxX - minX + 1;
     const boxHeight = maxY - minY + 1;
-    const area = component.length;
+    const area = pixels.length;
     const isMicro = area <= maxMicroArea || boxWidth <= maxMicroWidth || boxHeight <= maxMicroHeight;
-    const target = isMicro ? micro : macro;
-    if (isMicro) microCount += 1;
-    for (const p of component) target[p] = 1;
+    if (isMicro) micro.push({ pixels, minX, minY, maxX, maxY, area });
+    else for (const p of pixels) macro[p] = 1;
   }
 
-  return { macro, micro, microCount };
+  return { macro, micro };
+}
+
+/**
+ * Trace a fine connected component in its own padded local coordinate system.
+ * Local tracing is the key detail: a 20x8 tagline glyph is no longer simplified
+ * as though it lived on a 1254x1254 canvas. The resulting path is translated back
+ * into the original logo coordinate system and remains independently editable.
+ */
+function traceMicroComponent(component: Component, sourceWidth: number, color: Rgb, options: VectorizeOptions): string[] {
+  const padding = 3;
+  const originX = Math.max(0, component.minX - padding);
+  const originY = Math.max(0, component.minY - padding);
+  const localWidth = component.maxX - component.minX + 1 + padding * 2;
+  const localHeight = component.maxY - component.minY + 1 + padding * 2;
+  const image = new ImageData(localWidth, localHeight);
+  const data = image.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = 255;
+  }
+  for (const p of component.pixels) {
+    const x = p % sourceWidth;
+    const y = Math.floor(p / sourceWidth);
+    const lx = x - originX;
+    const ly = y - originY;
+    if (lx < 0 || ly < 0 || lx >= localWidth || ly >= localHeight) continue;
+    const i = (ly * localWidth + lx) * 4;
+    data[i] = 0; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 255;
+  }
+
+  const detail = Math.max(0.94, options.detail / 100);
+  const traceOptions = {
+    ltres: Math.max(0.035, 0.12 - detail * 0.075),
+    qtres: Math.max(0.05, 0.17 - detail * 0.11),
+    pathomit: 0,
+    rightangleenhance: true,
+    colorsampling: 0,
+    numberofcolors: 2,
+    mincolorratio: 0,
+    colorquantcycles: 1,
+    layering: 0,
+    strokewidth: 0,
+    linefilter: false,
+    scale: 1,
+    roundcoords: 7,
+    viewbox: true,
+    desc: false,
+    blurradius: 0,
+    blurdelta: 0,
+  } as Parameters<typeof ImageTracer.imagedataToSVG>[1];
+
+  const traced = ImageTracer.imagedataToSVG(image, traceOptions);
+  const tags = extractColoredPaths(traced, color);
+  return tags.map((tag) => `<g transform="translate(${originX} ${originY})">${tag}</g>`);
 }
 
 function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color: Rgb, options: VectorizeOptions, micro: boolean): string[] {
@@ -238,7 +283,11 @@ function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color
     blurdelta: 0,
   } as Parameters<typeof ImageTracer.imagedataToSVG>[1];
   const traced = ImageTracer.imagedataToSVG(image, traceOptions);
-  const tags = traced.match(/<path\b[^>]*\/>|<path\b[^>]*>[\s\S]*?<\/path>/g) ?? [];
+  return extractColoredPaths(traced, color);
+}
+
+function extractColoredPaths(svg: string, color: Rgb): string[] {
+  const tags = svg.match(/<path\b[^>]*\/>|<path\b[^>]*>[\s\S]*?<\/path>/g) ?? [];
   const retained: string[] = [];
   for (const tag of tags) {
     const fill = tag.match(/fill="rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)"/);
