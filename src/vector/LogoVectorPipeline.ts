@@ -5,6 +5,7 @@ import { inspectSvg } from './quality';
 interface Rgb { r: number; g: number; b: number }
 interface Lab { l: number; a: number; b: number }
 interface PaletteColor { rgb: Rgb; lab: Lab; count: number }
+interface LayerSplit { macro: Uint8Array; micro: Uint8Array; microCount: number }
 
 export interface LogoPipelineResult {
   svg: string;
@@ -15,12 +16,12 @@ export interface LogoPipelineResult {
 /**
  * Dedicated logo pipeline.
  *
- * Important differences from the generic tracer:
- * - brand colours are learned from eroded/interior source pixels in CIE Lab;
- * - every source foreground pixel belongs to exactly one colour layer;
- * - each layer is traced as a binary mask (no colour quantisation inside ImageTracer);
- * - final SVG paths receive the exact representative source RGB colour;
- * - output is raster-checked against the source before a quality score is returned.
+ * Brand colours are learned from source pixels and then frozen. Geometry is
+ * traced from binary masks so ImageTracer cannot re-quantise those colours.
+ * Small disconnected components (lettering, rules, TM marks and other fine
+ * logo details) are traced independently with tighter tolerances than large
+ * emblem geometry. This prevents a single global simplification setting from
+ * damaging typography while keeping circles and large marks smooth.
  */
 export async function vectorizeLogoHighFidelity(source: ImageData, options: VectorizeOptions): Promise<LogoPipelineResult> {
   const background = estimateBackground(source);
@@ -37,8 +38,16 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
 
   const paths: string[] = [];
   for (let index = 0; index < palette.length; index += 1) {
-    if (!hasForeground(layerMasks[index])) continue;
-    paths.push(...traceBinaryLayer(layerMasks[index], source.width, source.height, palette[index].rgb, options));
+    const mask = layerMasks[index];
+    if (!hasForeground(mask)) continue;
+
+    const split = splitMacroAndMicro(mask, source.width, source.height);
+    if (hasForeground(split.macro)) {
+      paths.push(...traceBinaryLayer(split.macro, source.width, source.height, palette[index].rgb, options, false));
+    }
+    if (hasForeground(split.micro)) {
+      paths.push(...traceBinaryLayer(split.micro, source.width, source.height, palette[index].rgb, options, true));
+    }
   }
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}">${paths.join('')}</svg>`;
@@ -148,7 +157,60 @@ function preserveAndCleanLayer(mask: Uint8Array, width: number, height: number):
   removeComponentsSmallerThan(mask, width, height, 2);
 }
 
-function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color: Rgb, options: VectorizeOptions): string[] {
+/** Split one colour layer by connected-component scale.
+ *
+ * The thresholds are relative to the uploaded artwork, not hard-coded pixels.
+ * A component is considered micro-detail when it is small in area OR narrow in
+ * one dimension. That catches VENTURES/taglines/rules/TM marks without forcing
+ * the large circular emblem through the typography tracer.
+ */
+function splitMacroAndMicro(mask: Uint8Array, width: number, height: number): LayerSplit {
+  const macro = new Uint8Array(mask.length);
+  const micro = new Uint8Array(mask.length);
+  const visited = new Uint8Array(mask.length);
+  const queue = new Int32Array(mask.length);
+  const imageArea = width * height;
+  const maxMicroArea = Math.max(12, imageArea * 0.0045);
+  const maxMicroWidth = Math.max(4, width * 0.14);
+  const maxMicroHeight = Math.max(4, height * 0.085);
+  let microCount = 0;
+
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || visited[start]) continue;
+    let head = 0, tail = 0;
+    queue[tail++] = start; visited[start] = 1;
+    const component: number[] = [];
+    let minX = width, minY = height, maxX = 0, maxY = 0;
+
+    while (head < tail) {
+      const p = queue[head++];
+      component.push(p);
+      const x = p % width, y = Math.floor(p / width);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const np = ny * width + nx;
+        if (!mask[np] || visited[np]) continue;
+        visited[np] = 1; queue[tail++] = np;
+      }
+    }
+
+    const boxWidth = maxX - minX + 1;
+    const boxHeight = maxY - minY + 1;
+    const area = component.length;
+    const isMicro = area <= maxMicroArea || boxWidth <= maxMicroWidth || boxHeight <= maxMicroHeight;
+    const target = isMicro ? micro : macro;
+    if (isMicro) microCount += 1;
+    for (const p of component) target[p] = 1;
+  }
+
+  return { macro, micro, microCount };
+}
+
+function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color: Rgb, options: VectorizeOptions, micro: boolean): string[] {
   const image = new ImageData(width, height);
   const data = image.data;
   for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
@@ -157,8 +219,8 @@ function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color
   }
   const detail = options.detail / 100;
   const traceOptions = {
-    ltres: Math.max(0.12, 0.55 - detail * 0.32),
-    qtres: Math.max(0.18, 0.72 - detail * 0.40),
+    ltres: micro ? Math.max(0.055, 0.19 - detail * 0.10) : Math.max(0.12, 0.55 - detail * 0.32),
+    qtres: micro ? Math.max(0.075, 0.26 - detail * 0.14) : Math.max(0.18, 0.72 - detail * 0.40),
     pathomit: 0,
     rightangleenhance: true,
     colorsampling: 0,
@@ -169,7 +231,7 @@ function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color
     strokewidth: 0,
     linefilter: false,
     scale: 1,
-    roundcoords: 5,
+    roundcoords: micro ? 6 : 5,
     viewbox: true,
     desc: false,
     blurradius: 0,
