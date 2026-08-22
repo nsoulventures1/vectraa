@@ -2,6 +2,7 @@ import ImageTracer from 'imagetracerjs';
 import { assertSafeSvg, inspectSvg } from './quality';
 import { vectorizeLogoHighFidelity } from './LogoVectorPipeline';
 import { clampOptions } from './presets';
+import { decodeRaster } from './rasterDecode';
 import { sanitizeGeneratedSvg } from './sanitizeSvg';
 import type { VectorEngine, VectorResult, VectorizeOptions } from './types';
 import { validateRasterFileSignature } from './validateInput';
@@ -14,7 +15,9 @@ export class JsVectorEngine implements VectorEngine {
     await validateRasterFileSignature(file);
     const options = clampOptions(rawOptions);
     const started = performance.now();
-    const decoded = await decodeImage(file);
+    // Analysis and conversion now consume the exact same cached pixel snapshot.
+    // A file that was successfully analyzed is never decoded a second time here.
+    const decoded = await decodeRaster(file);
 
     if (options.preset === 'logo') {
       const result = await vectorizeLogoHighFidelity(decoded, options);
@@ -35,77 +38,6 @@ export class JsVectorEngine implements VectorEngine {
     const traced = ImageTracer.imagedataToSVG(prepared.imageData, toTraceOptions(options, prepared.scale));
     const svg = assertSafeSvg(sanitizeGeneratedSvg(traced));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
-  }
-}
-
-/**
- * Decode from an immutable byte snapshot rather than handing the same File object
- * through several independent browser decoders. Analysis proves the upload is valid;
- * this path makes conversion deterministic in Chrome by trying Blob URL decoding first
- * and createImageBitmap from fresh bytes second.
- */
-async function decodeImage(file: File): Promise<ImageData> {
-  const bytes = await file.arrayBuffer();
-  if (!bytes.byteLength) throw new Error('The source image is empty.');
-  const mime = file.type || 'application/octet-stream';
-
-  try {
-    return await decodeBytesWithHtmlImage(bytes, mime);
-  } catch (imageError) {
-    try {
-      const blob = new Blob([bytes.slice(0)], { type: mime });
-      const bitmap = await createImageBitmap(blob);
-      try {
-        return renderDrawable(bitmap, bitmap.width, bitmap.height);
-      } finally {
-        bitmap.close();
-      }
-    } catch (bitmapError) {
-      const imageMessage = imageError instanceof Error ? imageError.message : 'HTML image decode failed';
-      const bitmapMessage = bitmapError instanceof Error ? bitmapError.message : 'createImageBitmap failed';
-      throw new Error(`The source image could not be decoded (HTML decoder: ${imageMessage}; bitmap decoder: ${bitmapMessage}).`);
-    }
-  }
-}
-
-function renderDrawable(source: CanvasImageSource, sourceWidth: number, sourceHeight: number): ImageData {
-  const maxDimension = 3000;
-  const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
-  const width = Math.max(1, Math.round(sourceWidth * scale));
-  const height = Math.max(1, Math.round(sourceHeight * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) throw new Error('Vectraa could not prepare the image for tracing.');
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  context.drawImage(source, 0, 0, width, height);
-  return context.getImageData(0, 0, width, height);
-}
-
-async function decodeBytesWithHtmlImage(bytes: ArrayBuffer, mime: string): Promise<ImageData> {
-  const blob = new Blob([bytes.slice(0)], { type: mime });
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    image.decoding = 'async';
-    const loaded = new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('browser image decoder rejected the source bytes'));
-    });
-    image.src = url;
-    await loaded;
-    // decode() is useful when available but onload is the compatibility authority.
-    if (typeof image.decode === 'function') {
-      try { await image.decode(); } catch { /* already loaded; continue */ }
-    }
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
-    if (!width || !height) throw new Error('decoded image has zero dimensions');
-    return renderDrawable(image, width, height);
-  } finally {
-    URL.revokeObjectURL(url);
   }
 }
 
