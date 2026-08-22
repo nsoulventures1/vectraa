@@ -60,7 +60,6 @@ function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
     const hsv = rgbToHsv(rgb);
     const delta = deltaE76(rgbToLab(rgb), bgLab);
     const darker = bgLum - luminance(rgb);
-    // Lab separation catches pale gold and antialiased edges; saturation catches chromatic accents.
     if (delta >= 5.5 || darker >= 8 || hsv.s >= 0.07) mask[p] = 1;
   }
   return mask;
@@ -70,11 +69,9 @@ function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallback
   const samples = collectSamples(source, hasEnough(interiorMask, 30) ? interiorMask : fallbackMask, 70000);
   if (!samples.length) return [];
 
-  // Over-cluster first, then merge nearby Lab centres. This is more reliable than guessing k directly:
-  // tiny real accents survive, while JPEG/antialias shades collapse back into their parent ink.
   const k = Math.max(2, Math.min(maxColors, 7, samples.length));
   let centres = initialiseKmeansPlusPlus(samples, k);
-  let assignments = new Int16Array(samples.length);
+  let assignments: Int16Array<ArrayBufferLike> = new Int16Array(samples.length);
   for (let iteration = 0; iteration < 15; iteration += 1) {
     assignments = assignLabs(samples.map((s) => s.lab), centres);
     const next = recomputeCentres(samples, assignments, centres.length);
@@ -86,7 +83,6 @@ function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallback
   for (let c = 0; c < centres.length; c += 1) {
     const members = samples.filter((_, index) => assignments[index] === c);
     if (!members.length) continue;
-    // 0.08% is enough to retain small ™ marks and thin accent rules on ordinary logos.
     if (members.length / samples.length < 0.0008) continue;
     const rgb = exactRepresentativeRgb(members.map((m) => m.rgb));
     const hsv = rgbToHsv(rgb);
@@ -99,13 +95,11 @@ function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallback
   for (const cluster of clusters) {
     const existing = merged.find((candidate) => deltaE76(candidate.lab, cluster.lab) < 7.0);
     if (existing) {
-      // Preserve the actual more-common source colour, not an averaged synthetic colour.
       if (cluster.count > existing.count) { existing.rgb = cluster.rgb; existing.lab = cluster.lab; }
       existing.count += cluster.count;
     } else merged.push({ ...cluster });
   }
 
-  // Remove desaturated edge ghosts sitting close to a stronger chromatic colour.
   return merged.filter((candidate, index, list) => {
     const hsv = rgbToHsv(candidate.rgb);
     if (hsv.s >= 0.18) return true;
@@ -124,7 +118,6 @@ function assignPixelsToPalette(source: ImageData, foreground: Uint8Array, palett
     if (!foreground[p]) continue;
     const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
     const lab = rgbToLab(rgb);
-    // Ignore pixels perceptually closer to background than to any brand colour. This removes halos.
     let best = 0; let bestD = Infinity;
     for (let c = 0; c < palette.length; c += 1) {
       const d = deltaE76(lab, palette[c].lab);
@@ -144,7 +137,6 @@ function makeLayerMask(labels: Int16Array, layer: number, width: number, height:
 }
 
 function preserveAndCleanLayer(mask: Uint8Array, width: number, height: number): void {
-  // Fill isolated 1px holes, but never erode legitimate thin typography.
   const copy = mask.slice();
   for (let y = 1; y < height - 1; y += 1) for (let x = 1; x < width - 1; x += 1) {
     const p = y * width + x;
@@ -190,7 +182,6 @@ function traceBinaryLayer(mask: Uint8Array, width: number, height: number, color
     const fill = tag.match(/fill="rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)"/);
     if (!fill) continue;
     const r = Number(fill[1]), g = Number(fill[2]), b = Number(fill[3]);
-    // Binary foreground traces black; white paths are just the temporary background.
     if (r > 220 && g > 220 && b > 220) continue;
     retained.push(tag.replace(/fill="rgb\([^\"]+\)"/, `fill="rgb(${color.r},${color.g},${color.b})"`));
   }
@@ -240,7 +231,6 @@ async function measureFidelity(source: ImageData, svg: string, background: Rgb, 
 }
 
 function nearestPaletteDelta(source: Rgb, output: Rgb, palette: Rgb[]): number {
-  // Compare output to the source's nearest true palette ink instead of antialias shades.
   let nearest = palette[0]; let best = Infinity;
   const sourceLab = rgbToLab(source);
   for (const color of palette) { const d = deltaE76(sourceLab, rgbToLab(color)); if (d < best) { best = d; nearest = color; } }
@@ -261,7 +251,6 @@ function collectSamples(source: ImageData, mask: Uint8Array, limit: number): Arr
 }
 
 function initialiseKmeansPlusPlus(samples: Array<{ rgb: Rgb; lab: Lab }>, k: number): Lab[] {
-  // Deterministic farthest-point initialisation: repeatable, and favours distinct accent colours.
   const centres: Lab[] = [samples[Math.floor(samples.length / 2)].lab];
   while (centres.length < k) {
     let bestSample = samples[0].lab; let bestDistance = -1;
