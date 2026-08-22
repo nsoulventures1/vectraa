@@ -19,11 +19,17 @@ export class JsVectorEngine implements VectorEngine {
 
     if (options.preset === 'logo') {
       try {
+        // Keep the proven palette/segmentation pipeline intact, but run logo geometry
+        // at a precision floor. This lowers ImageTracer's line/quadratic tolerances in
+        // LogoVectorPipeline for tiny type, rules, punctuation and trademark marks
+        // without changing the source-derived brand colours.
+        const precisionOptions = logoPrecisionOptions(options);
+
         // The logo pipeline raster-checks its generated SVG. Chromium occasionally
         // rejects SVG Blobs in createImageBitmap even though the SVG is valid. Install
         // a narrow fallback for that verification so we keep the palette-preserving
         // high-fidelity result instead of dropping to the generic colour quantizer.
-        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(decoded, options));
+        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(decoded, precisionOptions));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
         const structural = inspectSvg(svg);
         return {
@@ -57,6 +63,23 @@ export class JsVectorEngine implements VectorEngine {
     const svg = assertSafeSvg(sanitizeGeneratedSvg(traced));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
   }
+}
+
+/**
+ * Logos are unusually sensitive to tiny geometric errors: a one-pixel loss can erase
+ * a period, thin rule, counter or trademark stroke. The dedicated logo pipeline already
+ * removes true speckles and protects colour fidelity, so it is safe to use a much higher
+ * tracing-detail floor here than for photographs/illustrations.
+ *
+ * Deliberately do NOT alter `colors`: palette discovery remains source-driven in
+ * LogoVectorPipeline. This isolates the geometry improvement from the colour system that
+ * is now producing the correct NSOUL navy/gold separation.
+ */
+function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
+  return {
+    ...options,
+    detail: Math.max(options.detail, 94),
+  };
 }
 
 async function withSvgBitmapFallback<T>(work: () => Promise<T>): Promise<T> {
