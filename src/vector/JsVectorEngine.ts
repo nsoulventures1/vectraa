@@ -15,12 +15,15 @@ export class JsVectorEngine implements VectorEngine {
     await validateRasterFileSignature(file);
     const options = clampOptions(rawOptions);
     const started = performance.now();
-    // Analysis and conversion consume the exact same cached pixel snapshot.
     const decoded = await decodeRaster(file);
 
     if (options.preset === 'logo') {
       try {
-        const result = await vectorizeLogoHighFidelity(decoded, options);
+        // The logo pipeline raster-checks its generated SVG. Chromium occasionally
+        // rejects SVG Blobs in createImageBitmap even though the SVG is valid. Install
+        // a narrow fallback for that verification so we keep the palette-preserving
+        // high-fidelity result instead of dropping to the generic colour quantizer.
+        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(decoded, options));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
         const structural = inspectSvg(svg);
         return {
@@ -33,23 +36,17 @@ export class JsVectorEngine implements VectorEngine {
           },
         };
       } catch (error) {
-        // The high-fidelity pipeline performs an internal raster check of its generated
-        // SVG. Chromium can reject createImageBitmap(svgBlob) with
-        // "The source image could not be decoded" even though the SVG itself is valid.
-        // A verification/rendering failure must never discard a successfully decoded
-        // source image or leave the user with no vector. Fall back to the proven generic
-        // tracer for this pass while keeping the failure visible as a quality warning.
         const fallback = traceGeneric(decoded, options);
         const svg = assertSafeSvg(sanitizeGeneratedSvg(fallback));
         const structural = inspectSvg(svg);
-        const reason = error instanceof Error ? error.message : 'high-fidelity logo verification failed';
+        const reason = error instanceof Error ? error.message : 'high-fidelity logo pipeline failed';
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
           quality: {
             ...structural,
             score: Math.min(structural.score, 82),
-            warnings: [...new Set([...structural.warnings, `Logo fidelity verification was unavailable (${reason}); a safe fallback trace was returned.`])],
+            warnings: [...new Set([...structural.warnings, `High-fidelity logo tracing failed (${reason}); a safe fallback trace was returned.`])],
           },
         };
       }
@@ -60,6 +57,50 @@ export class JsVectorEngine implements VectorEngine {
     const svg = assertSafeSvg(sanitizeGeneratedSvg(traced));
     return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
   }
+}
+
+async function withSvgBitmapFallback<T>(work: () => Promise<T>): Promise<T> {
+  if (typeof createImageBitmap !== 'function') return work();
+  const original = createImageBitmap.bind(globalThis);
+  const patched = async (...args: Parameters<typeof createImageBitmap>): Promise<ImageBitmap> => {
+    try {
+      return await original(...args);
+    } catch (error) {
+      const source = args[0];
+      if (!(source instanceof Blob) || !source.type.toLowerCase().includes('svg')) throw error;
+      const url = URL.createObjectURL(source);
+      try {
+        const image = await loadImage(url);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, image.naturalWidth || image.width);
+        canvas.height = Math.max(1, image.naturalHeight || image.height);
+        const context = canvas.getContext('2d');
+        if (!context) throw error;
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        return await original(canvas);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+  };
+
+  const holder = globalThis as typeof globalThis & { createImageBitmap: typeof createImageBitmap };
+  const previous = holder.createImageBitmap;
+  holder.createImageBitmap = patched as typeof createImageBitmap;
+  try {
+    return await work();
+  } finally {
+    holder.createImageBitmap = previous;
+  }
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Generated SVG could not be rasterized for fidelity verification.'));
+    image.src = url;
+  });
 }
 
 function traceGeneric(input: ImageData, options: VectorizeOptions): string {
