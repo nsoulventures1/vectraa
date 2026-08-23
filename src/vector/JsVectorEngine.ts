@@ -21,9 +21,9 @@ export class JsVectorEngine implements VectorEngine {
     const decoded = await decodeRaster(file);
 
     if (options.preset === 'logo') {
+      const precisionOptions = logoPrecisionOptions(options);
+      const preparedLogo = prepareLogoArtwork(decoded);
       try {
-        const precisionOptions = logoPrecisionOptions(options);
-        const preparedLogo = prepareLogoArtwork(decoded);
         const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(preparedLogo.imageData, precisionOptions));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
         const structural = inspectSvg(svg);
@@ -40,17 +40,23 @@ export class JsVectorEngine implements VectorEngine {
           },
         };
       } catch (error) {
-        const fallback = traceGeneric(decoded, options);
+        // IMPORTANT: fallback must use the same adaptively cleaned/consolidated raster.
+        // Previously we fell back to the raw upload, which reintroduced every JPEG and
+        // anti-alias shade and made the new flat-logo cleanup appear to have no effect.
+        const fallback = traceGeneric(preparedLogo.imageData, precisionOptions);
         const svg = assertSafeSvg(sanitizeGeneratedSvg(fallback));
         const structural = inspectSvg(svg);
         const reason = error instanceof Error ? error.message : 'high-fidelity logo pipeline failed';
+        const adaptiveWarnings: string[] = [];
+        if (preparedLogo.denoised) adaptiveWarnings.push('Adaptive logo cleanup remained active in fallback tracing.');
+        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo fallback retained ${preparedLogo.dominantColors} consolidated source colours.`);
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
           quality: {
             ...structural,
             score: Math.min(structural.score, 82),
-            warnings: [...new Set([...structural.warnings, `High-fidelity logo tracing failed (${reason}); a safe fallback trace was returned.`])],
+            warnings: [...new Set([...structural.warnings, ...adaptiveWarnings, `High-fidelity logo tracing failed (${reason}); an adaptively prepared fallback trace was returned.`])],
           },
         };
       }
@@ -67,17 +73,6 @@ function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
   return { ...options, detail: Math.max(options.detail, 94) };
 }
 
-/**
- * Adaptive logo preparation.
- *
- * 1) Clean masters stay untouched.
- * 2) Noisy/scanned/JPEG artwork receives edge-aware denoising.
- * 3) If that noisy image is statistically a flat logo, near-duplicate raster shades
- *    are collapsed into a small set of dominant source colours before vector tracing.
- *
- * The third stage is deliberately gated behind the noise test, so clean masters such
- * as NSOUL keep their exact source pixels and are not re-quantised.
- */
 function prepareLogoArtwork(input: ImageData): PreparedLogo {
   const noise = estimateLogoNoise(input);
   if (noise < 0.085) return { imageData: input, denoised: false, consolidated: false, dominantColors: 0 };
@@ -127,12 +122,6 @@ function edgeAwareDenoise(input: ImageData): ImageData {
   return out;
 }
 
-/**
- * Identify noisy artwork whose visual intent is nevertheless a small flat palette.
- * Pixels are grouped into coarse 4-bit RGB bins. We select the smallest set of dominant
- * bins (2-5 colours) covering at least 88% of opaque pixels. A photographic/tonal logo
- * normally fails this coverage test, while a blue/gold/black crest passes it.
- */
 function analyseFlatLogo(input: ImageData): { isFlat: boolean; colors: Rgb[] } {
   const bins = new Map<number, { count: number; r: number; g: number; b: number }>();
   let total = 0;
@@ -157,8 +146,6 @@ function analyseFlatLogo(input: ImageData): { isFlat: boolean; colors: Rgb[] } {
   const selected: Rgb[] = [];
   let covered = 0;
   for (const entry of ranked) {
-    // Avoid selecting multiple quantisation bins that are merely anti-aliased shades
-    // of one intended colour.
     const duplicate = selected.some((color) => rgbDistance(color, entry.color) < 38);
     if (!duplicate) selected.push(entry.color);
     covered += entry.count;
@@ -171,12 +158,6 @@ function analyseFlatLogo(input: ImageData): { isFlat: boolean; colors: Rgb[] } {
   return { isFlat, colors: isFlat ? selected : [] };
 }
 
-/**
- * Collapse JPEG ringing and shade variants onto the detected dominant source colours.
- * We only snap pixels reasonably close to a dominant colour; genuinely exceptional
- * colours remain available to the downstream palette extractor, protecting small
- * accents that are not compression artefacts.
- */
 function consolidateFlatLogoColors(input: ImageData, colors: Rgb[]): ImageData {
   const out = new ImageData(new Uint8ClampedArray(input.data), input.width, input.height);
   for (let p = 0; p < out.data.length; p += 4) {
@@ -188,8 +169,6 @@ function consolidateFlatLogoColors(input: ImageData, colors: Rgb[]): ImageData {
       const d = rgbDistance(source, color);
       if (d < distance) { distance = d; nearest = color; }
     }
-    // 78 RGB units is wide enough to absorb JPEG ringing/anti-alias shades but narrow
-    // enough that genuinely distinct small accent colours are not forcibly destroyed.
     if (distance <= 78) {
       out.data[p] = nearest.r; out.data[p + 1] = nearest.g; out.data[p + 2] = nearest.b;
     }
