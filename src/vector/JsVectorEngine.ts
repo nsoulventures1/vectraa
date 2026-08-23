@@ -7,6 +7,9 @@ import { sanitizeGeneratedSvg } from './sanitizeSvg';
 import type { VectorEngine, VectorResult, VectorizeOptions } from './types';
 import { validateRasterFileSignature } from './validateInput';
 
+interface Rgb { r: number; g: number; b: number }
+interface PreparedLogo { imageData: ImageData; denoised: boolean; consolidated: boolean; dominantColors: number }
+
 /** Browser vector engine. */
 export class JsVectorEngine implements VectorEngine {
   readonly id = 'imagetracer-js';
@@ -24,9 +27,9 @@ export class JsVectorEngine implements VectorEngine {
         const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(preparedLogo.imageData, precisionOptions));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
         const structural = inspectSvg(svg);
-        const adaptiveWarnings = preparedLogo.denoised
-          ? ['Adaptive logo cleanup removed low-amplitude raster noise before tracing while protecting strong edges.']
-          : [];
+        const adaptiveWarnings: string[] = [];
+        if (preparedLogo.denoised) adaptiveWarnings.push('Adaptive logo cleanup removed low-amplitude raster noise while protecting strong edges.');
+        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo mode consolidated raster shades into ${preparedLogo.dominantColors} dominant source colours before tracing.`);
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
@@ -65,16 +68,29 @@ function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
 }
 
 /**
- * Decide whether the uploaded logo is already clean/flat or is a photographed/JPEG-like
- * source. Clean artwork (such as the NSOUL master) is returned byte-for-byte unchanged.
- * Noisy artwork receives a conservative edge-aware cleanup before palette extraction.
- * This prevents compression speckles and photographed texture from becoming thousands
- * of tiny SVG islands while preserving lettering, insignia outlines and hard colour edges.
+ * Adaptive logo preparation.
+ *
+ * 1) Clean masters stay untouched.
+ * 2) Noisy/scanned/JPEG artwork receives edge-aware denoising.
+ * 3) If that noisy image is statistically a flat logo, near-duplicate raster shades
+ *    are collapsed into a small set of dominant source colours before vector tracing.
+ *
+ * The third stage is deliberately gated behind the noise test, so clean masters such
+ * as NSOUL keep their exact source pixels and are not re-quantised.
  */
-function prepareLogoArtwork(input: ImageData): { imageData: ImageData; denoised: boolean } {
+function prepareLogoArtwork(input: ImageData): PreparedLogo {
   const noise = estimateLogoNoise(input);
-  if (noise < 0.085) return { imageData: input, denoised: false };
+  if (noise < 0.085) return { imageData: input, denoised: false, consolidated: false, dominantColors: 0 };
 
+  const denoised = edgeAwareDenoise(input);
+  const flat = analyseFlatLogo(denoised);
+  if (!flat.isFlat) return { imageData: denoised, denoised: true, consolidated: false, dominantColors: 0 };
+
+  const consolidated = consolidateFlatLogoColors(denoised, flat.colors);
+  return { imageData: consolidated, denoised: true, consolidated: true, dominantColors: flat.colors.length };
+}
+
+function edgeAwareDenoise(input: ImageData): ImageData {
   const out = new ImageData(new Uint8ClampedArray(input.data), input.width, input.height);
   const src = input.data;
   const dst = out.data;
@@ -85,59 +101,110 @@ function prepareLogoArtwork(input: ImageData): { imageData: ImageData; denoised:
     for (let x = 1; x < width - 1; x += 1) {
       const p = (y * width + x) * 4;
       if (src[p + 3] < 16) continue;
-
       const centreR = src[p], centreG = src[p + 1], centreB = src[p + 2];
-      let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
-      let nearCount = 0;
+      let sumR = 0, sumG = 0, sumB = 0, weightSum = 0, nearCount = 0;
 
       for (let dy = -1; dy <= 1; dy += 1) {
         for (let dx = -1; dx <= 1; dx += 1) {
           const q = ((y + dy) * width + x + dx) * 4;
           if (src[q + 3] < 16) continue;
-          const dr = src[q] - centreR;
-          const dg = src[q + 1] - centreG;
-          const db = src[q + 2] - centreB;
-          const distance = Math.sqrt(dr * dr + dg * dg + db * db);
-          // Never average across a real colour boundary. Only neighbouring pixels that
-          // are plausibly the same printed/raster colour are allowed to contribute.
+          const distance = Math.hypot(src[q] - centreR, src[q + 1] - centreG, src[q + 2] - centreB);
           if (distance > 34) continue;
           const weight = distance < 10 ? 4 : distance < 20 ? 2 : 1;
-          sumR += src[q] * weight;
-          sumG += src[q + 1] * weight;
-          sumB += src[q + 2] * weight;
-          weightSum += weight;
-          nearCount += 1;
+          sumR += src[q] * weight; sumG += src[q + 1] * weight; sumB += src[q + 2] * weight;
+          weightSum += weight; nearCount += 1;
         }
       }
 
-      // A strong edge has neighbours from multiple colour regions and therefore few
-      // same-colour neighbours. Leave those pixels untouched; only flatten texture in
-      // locally coherent regions.
       if (nearCount >= 5 && weightSum > 0) {
         const avgR = sumR / weightSum, avgG = sumG / weightSum, avgB = sumB / weightSum;
-        const shift = Math.hypot(avgR - centreR, avgG - centreG, avgB - centreB);
-        if (shift <= 15) {
-          dst[p] = Math.round(avgR);
-          dst[p + 1] = Math.round(avgG);
-          dst[p + 2] = Math.round(avgB);
+        if (Math.hypot(avgR - centreR, avgG - centreG, avgB - centreB) <= 15) {
+          dst[p] = Math.round(avgR); dst[p + 1] = Math.round(avgG); dst[p + 2] = Math.round(avgB);
         }
       }
     }
   }
-
-  return { imageData: out, denoised: true };
+  return out;
 }
 
 /**
- * Estimate JPEG/photographic texture without confusing intentional colour complexity
- * with noise. We sample flat-looking 3x3 neighbourhoods and count how often the centre
- * differs slightly from its neighbours. Large edge jumps are deliberately ignored.
+ * Identify noisy artwork whose visual intent is nevertheless a small flat palette.
+ * Pixels are grouped into coarse 4-bit RGB bins. We select the smallest set of dominant
+ * bins (2-5 colours) covering at least 88% of opaque pixels. A photographic/tonal logo
+ * normally fails this coverage test, while a blue/gold/black crest passes it.
  */
+function analyseFlatLogo(input: ImageData): { isFlat: boolean; colors: Rgb[] } {
+  const bins = new Map<number, { count: number; r: number; g: number; b: number }>();
+  let total = 0;
+  const step = Math.max(1, Math.floor(Math.max(input.width, input.height) / 650));
+
+  for (let y = 0; y < input.height; y += step) {
+    for (let x = 0; x < input.width; x += step) {
+      const p = (y * input.width + x) * 4;
+      if (input.data[p + 3] < 24) continue;
+      const r = input.data[p], g = input.data[p + 1], b = input.data[p + 2];
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+      const bin = bins.get(key) ?? { count: 0, r: 0, g: 0, b: 0 };
+      bin.count += 1; bin.r += r; bin.g += g; bin.b += b; bins.set(key, bin); total += 1;
+    }
+  }
+  if (!total) return { isFlat: false, colors: [] };
+
+  const ranked = [...bins.values()]
+    .sort((a, b) => b.count - a.count)
+    .map((bin) => ({ count: bin.count, color: { r: Math.round(bin.r / bin.count), g: Math.round(bin.g / bin.count), b: Math.round(bin.b / bin.count) } }));
+
+  const selected: Rgb[] = [];
+  let covered = 0;
+  for (const entry of ranked) {
+    // Avoid selecting multiple quantisation bins that are merely anti-aliased shades
+    // of one intended colour.
+    const duplicate = selected.some((color) => rgbDistance(color, entry.color) < 38);
+    if (!duplicate) selected.push(entry.color);
+    covered += entry.count;
+    if (selected.length >= 2 && covered / total >= 0.88) break;
+    if (selected.length >= 5) break;
+  }
+
+  const topCoverage = ranked.slice(0, 8).reduce((sum, item) => sum + item.count, 0) / total;
+  const isFlat = selected.length >= 2 && selected.length <= 5 && covered / total >= 0.82 && topCoverage >= 0.90;
+  return { isFlat, colors: isFlat ? selected : [] };
+}
+
+/**
+ * Collapse JPEG ringing and shade variants onto the detected dominant source colours.
+ * We only snap pixels reasonably close to a dominant colour; genuinely exceptional
+ * colours remain available to the downstream palette extractor, protecting small
+ * accents that are not compression artefacts.
+ */
+function consolidateFlatLogoColors(input: ImageData, colors: Rgb[]): ImageData {
+  const out = new ImageData(new Uint8ClampedArray(input.data), input.width, input.height);
+  for (let p = 0; p < out.data.length; p += 4) {
+    if (out.data[p + 3] < 24) continue;
+    const source = { r: out.data[p], g: out.data[p + 1], b: out.data[p + 2] };
+    let nearest = colors[0];
+    let distance = Infinity;
+    for (const color of colors) {
+      const d = rgbDistance(source, color);
+      if (d < distance) { distance = d; nearest = color; }
+    }
+    // 78 RGB units is wide enough to absorb JPEG ringing/anti-alias shades but narrow
+    // enough that genuinely distinct small accent colours are not forcibly destroyed.
+    if (distance <= 78) {
+      out.data[p] = nearest.r; out.data[p + 1] = nearest.g; out.data[p + 2] = nearest.b;
+    }
+  }
+  return out;
+}
+
+function rgbDistance(a: Rgb, b: Rgb): number {
+  return Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b);
+}
+
 function estimateLogoNoise(input: ImageData): number {
   const { width, height, data } = input;
   const step = Math.max(1, Math.floor(Math.max(width, height) / 320));
-  let candidates = 0;
-  let noisy = 0;
+  let candidates = 0, noisy = 0;
 
   for (let y = 1; y < height - 1; y += step) {
     for (let x = 1; x < width - 1; x += step) {
@@ -147,13 +214,9 @@ function estimateLogoNoise(input: ImageData): number {
       let minD = Infinity, maxD = 0, meanD = 0;
       for (const q of neighbours) {
         const d = Math.hypot(data[q] - data[p], data[q + 1] - data[p + 1], data[q + 2] - data[p + 2]);
-        minD = Math.min(minD, d);
-        maxD = Math.max(maxD, d);
-        meanD += d;
+        minD = Math.min(minD, d); maxD = Math.max(maxD, d); meanD += d;
       }
       meanD /= neighbours.length;
-      // Ignore hard graphic edges. Low-to-medium disagreement on all sides is the
-      // signature we care about: JPEG ringing, paper texture, scanner noise, shading.
       if (maxD < 48 && minD < 28) {
         candidates += 1;
         if (meanD >= 4.5) noisy += 1;
@@ -167,9 +230,8 @@ async function withSvgBitmapFallback<T>(work: () => Promise<T>): Promise<T> {
   if (typeof createImageBitmap !== 'function') return work();
   const original = createImageBitmap.bind(globalThis);
   const patched = async (...args: Parameters<typeof createImageBitmap>): Promise<ImageBitmap> => {
-    try {
-      return await original(...args);
-    } catch (error) {
+    try { return await original(...args); }
+    catch (error) {
       const source = args[0];
       if (!(source instanceof Blob) || !source.type.toLowerCase().includes('svg')) throw error;
       const url = URL.createObjectURL(source);
@@ -182,20 +244,15 @@ async function withSvgBitmapFallback<T>(work: () => Promise<T>): Promise<T> {
         if (!context) throw error;
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         return await original(canvas);
-      } finally {
-        URL.revokeObjectURL(url);
-      }
+      } finally { URL.revokeObjectURL(url); }
     }
   };
 
   const holder = globalThis as typeof globalThis & { createImageBitmap: typeof createImageBitmap };
   const previous = holder.createImageBitmap;
   holder.createImageBitmap = patched as typeof createImageBitmap;
-  try {
-    return await work();
-  } finally {
-    holder.createImageBitmap = previous;
-  }
+  try { return await work(); }
+  finally { holder.createImageBitmap = previous; }
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -219,16 +276,13 @@ function prepareGenericArtwork(input: ImageData, options: VectorizeOptions): { i
   if (factor === 1) return { imageData: input, scale: 1 };
 
   const base = document.createElement('canvas');
-  base.width = input.width;
-  base.height = input.height;
+  base.width = input.width; base.height = input.height;
   base.getContext('2d')?.putImageData(input, 0, 0);
   const canvas = document.createElement('canvas');
-  canvas.width = input.width * factor;
-  canvas.height = input.height * factor;
+  canvas.width = input.width * factor; canvas.height = input.height * factor;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return { imageData: input, scale: 1 };
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
+  context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
   context.drawImage(base, 0, 0, canvas.width, canvas.height);
   return { imageData: context.getImageData(0, 0, canvas.width, canvas.height), scale: 1 / factor };
 }
