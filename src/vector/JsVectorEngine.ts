@@ -40,16 +40,15 @@ export class JsVectorEngine implements VectorEngine {
           },
         };
       } catch (error) {
-        // IMPORTANT: fallback must use the same adaptively cleaned/consolidated raster.
-        // Previously we fell back to the raw upload, which reintroduced every JPEG and
-        // anti-alias shade and made the new flat-logo cleanup appear to have no effect.
-        const fallback = traceGeneric(preparedLogo.imageData, precisionOptions);
+        const fallback = preparedLogo.consolidated
+          ? traceFlatLogoFallback(preparedLogo.imageData, precisionOptions, preparedLogo.dominantColors)
+          : traceGeneric(preparedLogo.imageData, precisionOptions);
         const svg = assertSafeSvg(sanitizeGeneratedSvg(fallback));
         const structural = inspectSvg(svg);
         const reason = error instanceof Error ? error.message : 'high-fidelity logo pipeline failed';
         const adaptiveWarnings: string[] = [];
         if (preparedLogo.denoised) adaptiveWarnings.push('Adaptive logo cleanup remained active in fallback tracing.');
-        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo fallback retained ${preparedLogo.dominantColors} consolidated source colours.`);
+        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo fallback traced only ${preparedLogo.dominantColors} dominant source colours to suppress raster shade proliferation.`);
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
@@ -203,6 +202,36 @@ function estimateLogoNoise(input: ImageData): number {
     }
   }
   return candidates ? noisy / candidates : 0;
+}
+
+/**
+ * Dedicated fallback for flat logos. Once preprocessing has identified a low-palette
+ * logo we must not let ImageTracer expand it back into many quantised shades. This
+ * tracer therefore uses the detected palette size, disables resampling, and runs a
+ * single quantisation cycle. It is still only a fallback; the main high-fidelity path
+ * remains preferred whenever it completes successfully.
+ */
+function traceFlatLogoFallback(input: ImageData, options: VectorizeOptions, dominantColors: number): string {
+  const detail = Math.max(0.94, options.detail / 100);
+  return ImageTracer.imagedataToSVG(input, {
+    ltres: Math.max(0.12, 0.52 - detail * 0.30),
+    qtres: Math.max(0.16, 0.68 - detail * 0.36),
+    pathomit: 0,
+    rightangleenhance: true,
+    colorsampling: 0,
+    numberofcolors: Math.max(2, Math.min(6, dominantColors)),
+    mincolorratio: 0.0002,
+    colorquantcycles: 1,
+    layering: 0,
+    strokewidth: 0,
+    linefilter: false,
+    scale: 1,
+    roundcoords: 5,
+    viewbox: true,
+    desc: false,
+    blurradius: 0,
+    blurdelta: 0,
+  });
 }
 
 async function withSvgBitmapFallback<T>(work: () => Promise<T>): Promise<T> {
