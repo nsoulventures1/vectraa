@@ -1,6 +1,7 @@
 import ImageTracer from 'imagetracerjs';
 import { assertSafeSvg, inspectSvg } from './quality';
 import { vectorizeLogoHighFidelity } from './LogoVectorPipeline';
+import { tryVectorizeBandedBadge } from './BandedBadgePipeline';
 import { clampOptions } from './presets';
 import { decodeRaster } from './rasterDecode';
 import { sanitizeGeneratedSvg } from './sanitizeSvg';
@@ -23,6 +24,29 @@ export class JsVectorEngine implements VectorEngine {
     if (options.preset === 'logo') {
       const precisionOptions = logoPrecisionOptions(options);
       const preparedLogo = prepareLogoArtwork(decoded);
+
+      // First try a conservative structural detector for circular emblems with broad
+      // horizontal colour bands. When it matches, rebuild the circle and bands as clean
+      // SVG primitives and trace only the detailed insignia. Ordinary logos such as
+      // NSOUL do not satisfy this geometry test and continue through the normal pipeline.
+      const bandedBadge = tryVectorizeBandedBadge(preparedLogo.imageData, precisionOptions);
+      if (bandedBadge) {
+        const svg = assertSafeSvg(sanitizeGeneratedSvg(bandedBadge));
+        const structural = inspectSvg(svg);
+        const adaptiveWarnings: string[] = ['Banded-badge reconstruction replaced raster circle/band edges with clean SVG primitives.'];
+        if (preparedLogo.denoised) adaptiveWarnings.push('Adaptive logo cleanup removed low-amplitude raster noise while protecting strong edges.');
+        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo mode consolidated raster shades into ${preparedLogo.dominantColors} dominant source colours before badge reconstruction.`);
+        return {
+          svg,
+          elapsedMs: Math.round(performance.now() - started),
+          quality: {
+            ...structural,
+            score: Math.min(structural.score, 90),
+            warnings: [...new Set([...structural.warnings, ...adaptiveWarnings])],
+          },
+        };
+      }
+
       try {
         const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(preparedLogo.imageData, precisionOptions));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
