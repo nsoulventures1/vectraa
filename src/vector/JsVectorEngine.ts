@@ -19,26 +19,21 @@ export class JsVectorEngine implements VectorEngine {
 
     if (options.preset === 'logo') {
       try {
-        // Keep the proven palette/segmentation pipeline intact, but run logo geometry
-        // at a precision floor. This lowers ImageTracer's line/quadratic tolerances in
-        // LogoVectorPipeline for tiny type, rules, punctuation and trademark marks
-        // without changing the source-derived brand colours.
         const precisionOptions = logoPrecisionOptions(options);
-
-        // The logo pipeline raster-checks its generated SVG. Chromium occasionally
-        // rejects SVG Blobs in createImageBitmap even though the SVG is valid. Install
-        // a narrow fallback for that verification so we keep the palette-preserving
-        // high-fidelity result instead of dropping to the generic colour quantizer.
-        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(decoded, precisionOptions));
+        const preparedLogo = prepareLogoArtwork(decoded);
+        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(preparedLogo.imageData, precisionOptions));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
         const structural = inspectSvg(svg);
+        const adaptiveWarnings = preparedLogo.denoised
+          ? ['Adaptive logo cleanup removed low-amplitude raster noise before tracing while protecting strong edges.']
+          : [];
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
           quality: {
             ...structural,
             score: Math.min(structural.score, result.quality.score),
-            warnings: [...new Set([...structural.warnings, ...result.quality.warnings])],
+            warnings: [...new Set([...structural.warnings, ...result.quality.warnings, ...adaptiveWarnings])],
           },
         };
       } catch (error) {
@@ -65,21 +60,107 @@ export class JsVectorEngine implements VectorEngine {
   }
 }
 
-/**
- * Logos are unusually sensitive to tiny geometric errors: a one-pixel loss can erase
- * a period, thin rule, counter or trademark stroke. The dedicated logo pipeline already
- * removes true speckles and protects colour fidelity, so it is safe to use a much higher
- * tracing-detail floor here than for photographs/illustrations.
- *
- * Deliberately do NOT alter `colors`: palette discovery remains source-driven in
- * LogoVectorPipeline. This isolates the geometry improvement from the colour system that
- * is now producing the correct NSOUL navy/gold separation.
- */
 function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
-  return {
-    ...options,
-    detail: Math.max(options.detail, 94),
-  };
+  return { ...options, detail: Math.max(options.detail, 94) };
+}
+
+/**
+ * Decide whether the uploaded logo is already clean/flat or is a photographed/JPEG-like
+ * source. Clean artwork (such as the NSOUL master) is returned byte-for-byte unchanged.
+ * Noisy artwork receives a conservative edge-aware cleanup before palette extraction.
+ * This prevents compression speckles and photographed texture from becoming thousands
+ * of tiny SVG islands while preserving lettering, insignia outlines and hard colour edges.
+ */
+function prepareLogoArtwork(input: ImageData): { imageData: ImageData; denoised: boolean } {
+  const noise = estimateLogoNoise(input);
+  if (noise < 0.085) return { imageData: input, denoised: false };
+
+  const out = new ImageData(new Uint8ClampedArray(input.data), input.width, input.height);
+  const src = input.data;
+  const dst = out.data;
+  const width = input.width;
+  const height = input.height;
+
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const p = (y * width + x) * 4;
+      if (src[p + 3] < 16) continue;
+
+      const centreR = src[p], centreG = src[p + 1], centreB = src[p + 2];
+      let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
+      let nearCount = 0;
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const q = ((y + dy) * width + x + dx) * 4;
+          if (src[q + 3] < 16) continue;
+          const dr = src[q] - centreR;
+          const dg = src[q + 1] - centreG;
+          const db = src[q + 2] - centreB;
+          const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+          // Never average across a real colour boundary. Only neighbouring pixels that
+          // are plausibly the same printed/raster colour are allowed to contribute.
+          if (distance > 34) continue;
+          const weight = distance < 10 ? 4 : distance < 20 ? 2 : 1;
+          sumR += src[q] * weight;
+          sumG += src[q + 1] * weight;
+          sumB += src[q + 2] * weight;
+          weightSum += weight;
+          nearCount += 1;
+        }
+      }
+
+      // A strong edge has neighbours from multiple colour regions and therefore few
+      // same-colour neighbours. Leave those pixels untouched; only flatten texture in
+      // locally coherent regions.
+      if (nearCount >= 5 && weightSum > 0) {
+        const avgR = sumR / weightSum, avgG = sumG / weightSum, avgB = sumB / weightSum;
+        const shift = Math.hypot(avgR - centreR, avgG - centreG, avgB - centreB);
+        if (shift <= 15) {
+          dst[p] = Math.round(avgR);
+          dst[p + 1] = Math.round(avgG);
+          dst[p + 2] = Math.round(avgB);
+        }
+      }
+    }
+  }
+
+  return { imageData: out, denoised: true };
+}
+
+/**
+ * Estimate JPEG/photographic texture without confusing intentional colour complexity
+ * with noise. We sample flat-looking 3x3 neighbourhoods and count how often the centre
+ * differs slightly from its neighbours. Large edge jumps are deliberately ignored.
+ */
+function estimateLogoNoise(input: ImageData): number {
+  const { width, height, data } = input;
+  const step = Math.max(1, Math.floor(Math.max(width, height) / 320));
+  let candidates = 0;
+  let noisy = 0;
+
+  for (let y = 1; y < height - 1; y += step) {
+    for (let x = 1; x < width - 1; x += step) {
+      const p = (y * width + x) * 4;
+      if (data[p + 3] < 16) continue;
+      const neighbours = [p - 4, p + 4, p - width * 4, p + width * 4];
+      let minD = Infinity, maxD = 0, meanD = 0;
+      for (const q of neighbours) {
+        const d = Math.hypot(data[q] - data[p], data[q + 1] - data[p + 1], data[q + 2] - data[p + 2]);
+        minD = Math.min(minD, d);
+        maxD = Math.max(maxD, d);
+        meanD += d;
+      }
+      meanD /= neighbours.length;
+      // Ignore hard graphic edges. Low-to-medium disagreement on all sides is the
+      // signature we care about: JPEG ringing, paper texture, scanner noise, shading.
+      if (maxD < 48 && minD < 28) {
+        candidates += 1;
+        if (meanD >= 4.5) noisy += 1;
+      }
+    }
+  }
+  return candidates ? noisy / candidates : 0;
 }
 
 async function withSvgBitmapFallback<T>(work: () => Promise<T>): Promise<T> {
