@@ -26,9 +26,6 @@ export class JsVectorEngine implements VectorEngine {
       const precisionOptions = logoPrecisionOptions(options);
       const preparedLogo = prepareLogoArtwork(decoded);
 
-      // First use the narrow centred-dark-background badge detector. It is intentionally
-      // conservative and reconstructs the circular silhouette and broad colour bands as
-      // SVG primitives, while preserving detailed insignia as traced vector paths.
       const centeredBadge = tryVectorizeCenteredBandedBadge(preparedLogo.imageData, precisionOptions);
       if (centeredBadge) {
         const svg = assertSafeSvg(sanitizeGeneratedSvg(centeredBadge));
@@ -113,20 +110,17 @@ function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
     ...options,
     colors: Math.max(options.colors, 16),
     detail: Math.max(options.detail, 92),
-    smoothness: Math.min(options.smoothness, 8),
-    speckle: 0,
-    cornerThreshold: Math.min(options.cornerThreshold, 32),
-    optimize: false,
+    smoothing: Math.min(options.smoothing, 8),
   };
 }
 
 function traceGeneric(imageData: ImageData, options: VectorizeOptions): string {
   const detail = options.detail / 100;
-  const smooth = options.smoothness / 100;
+  const smooth = options.smoothing / 100;
   return ImageTracer.imagedataToSVG(imageData, {
     ltres: Math.max(0.05, 1.2 - detail * 1.12),
     qtres: Math.max(0.05, 1.2 - detail * 1.08),
-    pathomit: options.speckle,
+    pathomit: 0,
     rightangleenhance: true,
     colorsampling: 2,
     numberofcolors: options.colors,
