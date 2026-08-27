@@ -40,7 +40,6 @@ export function tryVectorizeCenteredBandedBadge(source:ImageData, options:Vector
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}"><defs><clipPath id="${clipId}"><circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}"/></clipPath></defs>${base.join('')}<g clip-path="url(#${clipId})">${tracedLayers.join('')}</g></svg>`;
 }
 
-/** Preserve thin white line art aggressively while keeping secondary coloured detail separate. */
 function foregroundInkLayers(source:ImageData,cx:number,cy:number,r:number,bands:Band[]):InkLayer[]{
   const w=source.width,h=source.height;
   const light=new Uint8Array(w*h),accent=new Uint8Array(w*h);
@@ -53,14 +52,12 @@ function foregroundInkLayers(source:ImageData,cx:number,cy:number,r:number,bands
     if(bands.some(v=>Math.abs(y-v.y0)<bandGuard||Math.abs(y-v.y1)<bandGuard))continue;
     const c=px(source,x,y);
     const d=dist(c,band.color),ld=luma(c)-luma(band.color);
-    if(d<=62)continue;
+    if(d<=70)continue;
     const i=y*w+x;
-
-    // Lower light threshold so 1px anti-aliased feather/sword strokes survive extraction.
-    if(ld>28||luma(c)>188){
+    if(ld>40||luma(c)>205){
       light[i]=1;
-      if(d>78)lightSamples.push(c);
-    }else if(d>92&&Math.abs(ld)>12){
+      if(d>92)lightSamples.push(c);
+    }else if(d>108&&Math.abs(ld)>18){
       accent[i]=1;
       accentSamples.push(c);
     }
@@ -79,9 +76,8 @@ function cleanBinary(raw:Uint8Array,w:number,h:number,preserveThin:boolean):Uint
   for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
     const i=y*w+x;let n=0;
     for(let yy=-1;yy<=1;yy++)for(let xx=-1;xx<=1;xx++)if(raw[(y+yy)*w+x+xx])n++;
-    // For light linework, only remove truly isolated pixels; do not erode 1px connected strokes.
-    if(raw[i]&&n<=(preserveThin?0:2))clean[i]=0;
-    else if(!raw[i]&&n>=(preserveThin?8:7))clean[i]=1;
+    if(raw[i]&&n<=(preserveThin?1:2))clean[i]=0;
+    else if(!raw[i]&&n>=7)clean[i]=1;
   }
   const final=new Uint8Array(clean);
   for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++)if(clean[y*w+x]){
@@ -104,17 +100,13 @@ function countOn(bits:Uint8Array):number{let n=0;for(const v of bits)n+=v?1:0;re
 function representativeLight(samples:Rgb[]):Rgb{
   if(!samples.length)return{r:255,g:255,b:255};
   const sorted=[...samples].sort((a,b)=>luma(b)-luma(a));
-  return median(sorted.slice(0,Math.max(8,Math.floor(sorted.length*.58))));
+  return median(sorted.slice(0,Math.max(8,Math.floor(sorted.length*.5))));
 }
 function representativeAccent(samples:Rgb[]):Rgb{
   if(!samples.length)return{r:40,g:55,b:150};
-  return dominant(samples,40);
+  return dominant(samples,46);
 }
 
-/**
- * Tiny/fine components are traced at 4x; medium components at 2x. This reduces staircase
- * artifacts without changing the already-correct structural circle/band geometry.
- */
 function traceConnectedMask(mask:ImageData):string[]{
   const w=mask.width,h=mask.height,fg=new Uint8Array(w*h);
   for(let i=0;i<w*h;i++)fg[i]=mask.data[i*4]<128?1:0;
@@ -122,10 +114,8 @@ function traceConnectedMask(mask:ImageData):string[]{
   const out:string[]=[];
   for(const c of comps){
     const bw=c.maxX-c.minX+1,bh=c.maxY-c.minY+1;
-    const tiny=bw<=w*.16||bh<=h*.12||c.pixels.length<Math.max(80,w*h*.0010);
-    const medium=!tiny&&(bw<=w*.34||bh<=h*.28||c.pixels.length<Math.max(260,w*h*.0032));
-    const factor=tiny?4:medium?2:1;
-    const pad=factor>=3?4:factor===2?3:2;
+    const fine=bw<=w*.24||bh<=h*.18||c.pixels.length<Math.max(110,w*h*.0016);
+    const factor=fine?3:1,pad=fine?3:2;
     const lw=(bw+pad*2)*factor,lh=(bh+pad*2)*factor;
     const img=new ImageData(lw,lh);
     for(let i=0;i<img.data.length;i+=4){img.data[i]=255;img.data[i+1]=255;img.data[i+2]=255;img.data[i+3]=255;}
@@ -136,13 +126,7 @@ function traceConnectedMask(mask:ImageData):string[]{
         img.data[j]=0;img.data[j+1]=0;img.data[j+2]=0;img.data[j+3]=255;
       }
     }
-    const traced=ImageTracer.imagedataToSVG(img,{
-      ltres:tiny?.018:medium?.032:.07,
-      qtres:tiny?.026:medium?.045:.095,
-      pathomit:0,rightangleenhance:true,colorsampling:0,numberofcolors:2,mincolorratio:0,
-      colorquantcycles:1,layering:0,strokewidth:0,linefilter:false,scale:1,
-      roundcoords:tiny?9:medium?8:7,viewbox:true,desc:false,blurradius:0,blurdelta:0,
-    });
+    const traced=ImageTracer.imagedataToSVG(img,{ltres:fine?.035:.075,qtres:fine?.05:.10,pathomit:0,rightangleenhance:true,colorsampling:0,numberofcolors:2,mincolorratio:0,colorquantcycles:1,layering:0,strokewidth:0,linefilter:false,scale:1,roundcoords:fine?8:7,viewbox:true,desc:false,blurradius:0,blurdelta:0});
     const paths=darkMaskPaths(traced);
     const tx=c.minX-pad,ty=c.minY-pad;
     if(factor===1)out.push(...paths.map(p=>`<g transform="translate(${tx} ${ty})">${p}</g>`));
@@ -200,7 +184,7 @@ function scanBands(source:ImageData,bg:Rgb,cx:number,cy:number,r:number):Band[]{
   for(let y=Math.ceil(cy-r*.88);y<=Math.floor(cy+r*.88);y++){
     const dy=y-cy,half=Math.sqrt(Math.max(0,r*r-dy*dy));
     if(half<r*.32)continue;
-    const cs=[-.82,-.72,.72,.82].map(q=>px(source,cx+half*q,y)).filter(c=>dist(c,bg)>48);
+    const cs=[-.82,-.72,.82,.82].map(q=>px(source,cx+half*q,y)).filter(c=>dist(c,bg)>48);
     if(cs.length>=2)rows.push({y,color:dominant(cs,52)});
   }
   if(!rows.length)return[];
