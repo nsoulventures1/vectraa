@@ -55,6 +55,11 @@ export class JsVectorEngine implements VectorEngine {
       const precisionOptions = logoPrecisionOptions(options);
       const preparedLogo = prepareLogoArtwork(decoded);
 
+      // Prepared pixels are useful only for structural badge detection/reconstruction.
+      // Never feed colour-consolidated/denoised pixels into the high-fidelity brand-logo
+      // tracer: it already learns and freezes exact source colours itself. Doing both
+      // stages caused brand colours (especially gold/navy) to drift and regressed logos
+      // while improving badges.
       const centeredBadge = tryVectorizeCenteredBandedBadge(preparedLogo.imageData, precisionOptions);
       if (centeredBadge) {
         const svg = assertSafeSvg(sanitizeGeneratedSvg(centeredBadge));
@@ -92,38 +97,34 @@ export class JsVectorEngine implements VectorEngine {
       }
 
       try {
-        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(preparedLogo.imageData, precisionOptions));
+        // IMPORTANT: high-fidelity logo tracing always receives untouched decoded pixels.
+        // This preserves the exact source palette while retaining all badge improvements.
+        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(decoded, precisionOptions));
         const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
         const structural = inspectSvg(svg);
-        const adaptiveWarnings: string[] = [];
-        if (preparedLogo.denoised) adaptiveWarnings.push('Adaptive logo cleanup removed low-amplitude raster noise while protecting strong edges.');
-        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo mode consolidated raster shades into ${preparedLogo.dominantColors} dominant source colours before tracing.`);
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
           quality: {
             ...structural,
             score: Math.min(structural.score, result.quality.score),
-            warnings: [...new Set([...structural.warnings, ...result.quality.warnings, ...adaptiveWarnings])],
+            warnings: [...new Set([...structural.warnings, ...result.quality.warnings, 'Original source pixels preserved for high-fidelity logo colour extraction.'])],
           },
         };
       } catch (error) {
-        const fallback = preparedLogo.consolidated
-          ? traceFlatLogoFallback(preparedLogo.imageData, precisionOptions, preparedLogo.dominantColors)
-          : traceGeneric(preparedLogo.imageData, precisionOptions);
+        // Fallback also starts from untouched pixels. A failed specialist logo trace must
+        // not silently downgrade brand colours through the preprocessing path.
+        const fallback = traceGeneric(decoded, precisionOptions);
         const svg = assertSafeSvg(sanitizeGeneratedSvg(fallback));
         const structural = inspectSvg(svg);
         const reason = error instanceof Error ? error.message : 'high-fidelity logo pipeline failed';
-        const adaptiveWarnings: string[] = [];
-        if (preparedLogo.denoised) adaptiveWarnings.push('Adaptive logo cleanup remained active in fallback tracing.');
-        if (preparedLogo.consolidated) adaptiveWarnings.push(`Flat-logo fallback traced only ${preparedLogo.dominantColors} dominant source colours to suppress raster shade proliferation.`);
         return {
           svg,
           elapsedMs: Math.round(performance.now() - started),
           quality: {
             ...structural,
             score: Math.min(structural.score, 82),
-            warnings: [...new Set([...structural.warnings, `High-fidelity logo pipeline fell back: ${reason}`, ...adaptiveWarnings])],
+            warnings: [...new Set([...structural.warnings, `High-fidelity logo pipeline fell back: ${reason}`])],
           },
         };
       }
