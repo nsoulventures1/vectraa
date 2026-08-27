@@ -22,6 +22,35 @@ export class JsVectorEngine implements VectorEngine {
     const started = performance.now();
     const decoded = await decodeRaster(file);
 
+    // Structural routing happens BEFORE the UI preset branch. The automatic classifier
+    // often labels detailed seals/roundels as "high-detail" rather than "logo". Keeping
+    // badge reconstruction inside the logo-only branch meant that the specialist code
+    // never ran for exactly the military/seal artwork it was built to improve.
+    const structuralOptions: VectorizeOptions = {
+      ...options,
+      detail: Math.max(options.detail, 96),
+      colors: Math.max(options.colors, 16),
+      smoothing: Math.min(options.smoothing, 6),
+    };
+    const structuralBadge = tryVectorizeCenteredBandedBadge(decoded, structuralOptions);
+    if (structuralBadge) {
+      const svg = assertSafeSvg(sanitizeGeneratedSvg(structuralBadge));
+      const structural = inspectSvg(svg);
+      return {
+        svg,
+        elapsedMs: Math.round(performance.now() - started),
+        quality: {
+          ...structural,
+          score: Math.min(structural.score, 94),
+          warnings: [...new Set([
+            ...structural.warnings,
+            'Structural badge auto-route activated before preset selection.',
+            'Circle and horizontal colour fields were rebuilt as SVG geometry; detailed foreground was traced separately.',
+          ])],
+        },
+      };
+    }
+
     if (options.preset === 'logo') {
       const precisionOptions = logoPrecisionOptions(options);
       const preparedLogo = prepareLogoArtwork(decoded);
