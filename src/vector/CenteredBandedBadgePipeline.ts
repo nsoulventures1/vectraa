@@ -19,21 +19,52 @@ export function tryVectorizeCenteredBandedBadge(source:ImageData, options:Vector
   for(const b of bands)base.push(`<rect x="${f(cx-r)}" y="${f(b.y0)}" width="${f(r*2)}" height="${f(b.y1-b.y0)}" fill="${rgb(b.color)}" clip-path="url(#${id})"/>`);
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}"><defs><clipPath id="${id}"><circle cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}"/></clipPath></defs>${base.join('')}<g clip-path="url(#${id})">${traced.join('')}</g></svg>`;
 }
-function foregroundInkLayers(s:ImageData,cx:number,cy:number,r:number,bands:Band[]):InkLayer[]{
- const w=s.width,h=s.height,light=new Uint8Array(w*h),accent=new Uint8Array(w*h),ls:Rgb[]=[],as:Rgb[]=[]; const edge=Math.max(3,r*.016),guard=Math.max(1,r*.006);
- for(let y=0;y<h;y++)for(let x=0;x<w;x++){if(Math.hypot(x-cx,y-cy)>r-edge)continue;const b=bands.find(v=>y>=v.y0&&y<v.y1);if(!b)continue;if(bands.some(v=>Math.abs(y-v.y0)<guard||Math.abs(y-v.y1)<guard))continue;const c=px(s,x,y),d=dist(c,b.color),ld=luma(c)-luma(b.color);if(d<=58)continue;const i=y*w+x;if(ld>30||luma(c)>190){light[i]=1;if(d>76)ls.push(c)}else if(d>92&&Math.abs(ld)>13){accent[i]=1;as.push(c)}}
- const L=cleanBinary(light,w,h,true),A=cleanBinary(accent,w,h,false),out:InkLayer[]=[];if(countOn(L)>5)out.push({mask:maskImage(L,w,h),color:representativeLight(ls),name:'light'});if(countOn(A)>5)out.push({mask:maskImage(A,w,h),color:representativeAccent(as),name:'accent'});return out;
+
+function traceConnectedMask(mask:ImageData):string[]{
+  // Keep structural geometry untouched and spend extra fidelity only on the
+  // foreground ink.  ImageTracer's lower line/curve thresholds retain the
+  // very thin heraldic strokes that were disappearing from badge centres.
+  const svg=ImageTracer.imagedataToSVG(mask,{
+    ltres:0.18,
+    qtres:0.18,
+    pathomit:0,
+    rightangleenhance:false,
+    colorsampling:0,
+    numberofcolors:2,
+    mincolorratio:0,
+    colorquantcycles:1,
+    strokewidth:0,
+    scale:1,
+    roundcoords:3,
+    viewbox:true,
+    desc:false,
+  });
+  const doc=new DOMParser().parseFromString(svg,'image/svg+xml');
+  return Array.from(doc.querySelectorAll('path')).map(p=>p.getAttribute('d')).filter((d):d is string=>!!d).map(d=>`<path d="${d}"/>`);
 }
-function cleanBinary(raw:Uint8Array,w:number,h:number,thin:boolean){const a=new Uint8Array(raw);for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;let n=0;for(let yy=-1;yy<=1;yy++)for(let xx=-1;xx<=1;xx++)if(raw[(y+yy)*w+x+xx])n++;if(raw[i]&&n<(thin?1:2))a[i]=0;else if(!raw[i]&&n>=8)a[i]=1}return a}
-function maskImage(bits:Uint8Array,w:number,h:number){const o=new ImageData(w,h);for(let i=0;i<bits.length;i++){const v=bits[i]?0:255,j=i*4;o.data[j]=o.data[j+1]=o.data[j+2]=v;o.data[j+3]=255}return o}
-function countOn(a:Uint8Array){let n=0;for(const v of a)n+=v?1:0;return n}
-function representativeLight(a:Rgb[]){if(!a.length)return{r:255,g:255,b:255};return median([...a].sort((x,y)=>luma(y)-luma(x)).slice(0,Math.max(8,Math.floor(a.length*.55))))}
-function representativeAccent(a:Rgb[]){return a.length?dominant(a,42):{r:40,g:55,b:150}}
-function traceConnectedMask(mask:ImageData){const w=mask.width,h=mask.height,fg=new Uint8Array(w*h);for(let i=0;i<w*h;i++)fg[i]=mask.data[i*4]<128?1:0;const cs=components(fg,w,h).filter(c=>c.pixels.length>=1),out:string[]=[];for(const c of cs){const bw=c.maxX-c.minX+1,bh=c.maxY-c.minY+1,fine=bw<=w*.30||bh<=h*.22||c.pixels.length<Math.max(180,w*h*.0024),factor=fine?4:2,pad=fine?4:3,lw=(bw+2*pad)*factor,lh=(bh+2*pad)*factor,img=new ImageData(lw,lh);for(let i=0;i<img.data.length;i+=4)img.data[i]=img.data[i+1]=img.data[i+2]=img.data[i+3]=255;for(const p of c.pixels){const x=p%w,y=Math.floor(p/w),x0=(x-c.minX+pad)*factor,y0=(y-c.minY+pad)*factor;for(let yy=0;yy<factor;yy++)for(let xx=0;xx<factor;xx++){const j=((y0+yy)*lw+x0+xx)*4;img.data[j]=img.data[j+1]=img.data[j+2]=0;img.data[j+3]=255}}const svg=ImageTracer.imagedataToSVG(img,{ltres:fine?.018:.045,qtres:fine?.025:.065,pathomit:0,rightangleenhance:true,colorsampling:0,numberofcolors:2,mincolorratio:0,colorquantcycles:1,layering:0,strokewidth:0,linefilter:false,scale:1,roundcoords:8,viewbox:true,desc:false,blurradius:0,blurdelta:0}),paths=darkMaskPaths(svg),tx=c.minX-pad,ty=c.minY-pad;out.push(...paths.map(p=>`<g transform="translate(${tx} ${ty}) scale(${1/factor})">${p}</g>`))}return out}
-function components(m:Uint8Array,w:number,h:number){const seen=new Uint8Array(m.length),q=new Int32Array(m.length),out:Component[]=[];for(let s=0;s<m.length;s++){if(!m[s]||seen[s])continue;let head=0,tail=0;q[tail++]=s;seen[s]=1;const pixels:number[]=[];let minX=w,minY=h,maxX=0,maxY=0;while(head<tail){const p=q[head++],x=p%w,y=Math.floor(p/w);pixels.push(p);minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=w||ny>=h)continue;const np=ny*w+nx;if(m[np]&&!seen[np]){seen[np]=1;q[tail++]=np}}}out.push({pixels,minX,minY,maxX,maxY})}return out}
-function scanCircleGeometry(s:ImageData,b:Rgb){const cx0=s.width/2,cy0=s.height/2,hs:any[]=[],vs:any[]=[];for(const z of[-.35,-.2,0,.2,.35]){const y=Math.round(cy0+s.height*z*.5),l=firstL(s,y,b),r=firstR(s,y,b);if(l>=0&&r>=0)hs.push({left:l,right:r});const x=Math.round(cx0+s.width*z*.5),t=firstT(s,x,b),bt=firstB(s,x,b);if(t>=0&&bt>=0)vs.push({top:t,bottom:bt})}if(hs.length<3||vs.length<3)return null;const H=hs.reduce((a,v)=>v.right-v.left>a.right-a.left?v:a),V=vs.reduce((a,v)=>v.bottom-v.top>a.bottom-a.top?v:a),width=H.right-H.left+1,height=V.bottom-V.top+1;if(width<s.width*.45||height<s.height*.45||Math.abs(width-height)/Math.max(width,height)>.12)return null;const cx=(H.left+H.right)/2,cy=(V.top+V.bottom)/2,r=(width+height)/4;if(Math.abs(cx-cx0)>s.width*.08||Math.abs(cy-cy0)>s.height*.08)return null;return{cx,cy,r}}
-function firstL(s:ImageData,y:number,b:Rgb){for(let x=0;x<s.width;x++)if(runH(s,x,y,1,b))return x;return-1}function firstR(s:ImageData,y:number,b:Rgb){for(let x=s.width-1;x>=0;x--)if(runH(s,x,y,-1,b))return x;return-1}function firstT(s:ImageData,x:number,b:Rgb){for(let y=0;y<s.height;y++)if(runV(s,x,y,1,b))return y;return-1}function firstB(s:ImageData,x:number,b:Rgb){for(let y=s.height-1;y>=0;y--)if(runV(s,x,y,-1,b))return y;return-1}function runH(s:ImageData,x:number,y:number,d:number,b:Rgb){for(let k=0;k<5;k++){const xx=x+k*d;if(xx<0||xx>=s.width||dist(px(s,xx,y),b)<62)return false}return true}function runV(s:ImageData,x:number,y:number,d:number,b:Rgb){for(let k=0;k<5;k++){const yy=y+k*d;if(yy<0||yy>=s.height||dist(px(s,x,yy),b)<62)return false}return true}
-function scanBands(s:ImageData,bg:Rgb,cx:number,cy:number,r:number){const rows:any[]=[];for(let y=Math.ceil(cy-r*.88);y<=Math.floor(cy+r*.88);y++){const dy=y-cy,half=Math.sqrt(Math.max(0,r*r-dy*dy));if(half<r*.32)continue;const cs=[-.82,-.72,.72,.82].map(q=>px(s,cx+half*q,y)).filter(c=>dist(c,bg)>48);if(cs.length>=2)rows.push({y,color:dominant(cs,52)})}if(!rows.length)return[];const smooth=rows.map((row,i)=>({y:row.y,color:dominant(rows.slice(Math.max(0,i-4),Math.min(rows.length,i+5)).map(v=>v.color),58)})),runs:Band[]=[];for(const row of smooth){const last=runs[runs.length-1];if(last&&dist(last.color,row.color)<68){const n=Math.max(1,last.y1-last.y0);last.color={r:Math.round((last.color.r*n+row.color.r)/(n+1)),g:Math.round((last.color.g*n+row.color.g)/(n+1)),b:Math.round((last.color.b*n+row.color.b)/(n+1))};last.y1=row.y+1}else runs.push({y0:row.y,y1:row.y+1,color:row.color})}let major=runs.filter(v=>v.y1-v.y0>=r*.10);if(major.length<2||major.length>5)return[];major=major.sort((a,b)=>a.y0-b.y0);major[0].y0=cy-r;major[major.length-1].y1=cy+r;for(let i=0;i<major.length-1;i++){const z=(major[i].y1+major[i+1].y0)/2;major[i].y1=z;major[i+1].y0=z}return major}
-function cornerBackground(s:ImageData){const a:Rgb[]=[],z=Math.max(4,Math.round(Math.min(s.width,s.height)*.06));for(const[ox,oy]of[[0,0],[s.width-z,0],[0,s.height-z],[s.width-z,s.height-z]])for(let y=oy;y<oy+z;y+=Math.max(1,Math.floor(z/7)))for(let x=ox;x<ox+z;x+=Math.max(1,Math.floor(z/7)))a.push(px(s,x,y));return median(a)}function cornerSpread(s:ImageData,b:Rgb){return Math.max(dist(px(s,0,0),b),dist(px(s,s.width-1,0),b),dist(px(s,0,s.height-1),b),dist(px(s,s.width-1,s.height-1),b))}
-function darkMaskPaths(svg:string){const doc=new DOMParser().parseFromString(svg,'image/svg+xml'),out:string[]=[];doc.querySelectorAll('path').forEach(p=>{const fill=p.getAttribute('fill')||'';const m=fill.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);if(!m||(+m[1]+ +m[2]+ +m[3])<384){const d=p.getAttribute('d');if(d)out.push(`<path d="${d}"/>`)}});return out}
-function px(s:ImageData,x:number,y:number):Rgb{x=Math.max(0,Math.min(s.width-1,Math.round(x)));y=Math.max(0,Math.min(s.height-1,Math.round(y)));const i=(y*s.width+x)*4;return{r:s.data[i],g:s.data[i+1],b:s.data[i+2]}}function dist(a:Rgb,b:Rgb){return Math.hypot(a.r-b.r,a.g-b.g,a.b-b.b)}function luma(c:Rgb){return .2126*c.r+.7152*c.g+.0722*c.b}function median(a:Rgb[]){if(!a.length)return{r:0,g:0,b:0};const q=(k:keyof Rgb)=>[...a].sort((x,y)=>x[k]-y[k])[Math.floor(a.length/2)][k];return{r:q('r'),g:q('g'),b:q('b')}}function dominant(a:Rgb[],tol:number){if(!a.length)return{r:0,g:0,b:0};let best:Rgb[]=[],used=new Uint8Array(a.length);for(let i=0;i<a.length;i++){if(used[i])continue;const g=a.filter(c=>dist(c,a[i])<tol);if(g.length>best.length)best=g}return median(best)}function rgb(c:Rgb){return`rgb(${c.r},${c.g},${c.b})`}function f(n:number){return Number(n.toFixed(3))}
+
+function foregroundInkLayers(source:ImageData,cx:number,cy:number,r:number,bands:Band[]):InkLayer[]{
+  const palette:Rgb[]=[{r:255,g:255,b:255},{r:8,g:31,b:76},{r:218,g:174,b:71}];
+  return palette.map((color,i)=>({mask:makeInkMask(source,cx,cy,r,bands,color,i),color,name:['light','dark','accent'][i]}));
+}
+function makeInkMask(source:ImageData,cx:number,cy:number,r:number,bands:Band[],target:Rgb,index:number):ImageData{
+  const out=new ImageData(source.width,source.height),d=source.data,o=out.data;
+  for(let y=0;y<source.height;y++)for(let x=0;x<source.width;x++){
+    const k=(y*source.width+x)*4,inside=(x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r;
+    let hit=false;
+    if(inside){const c={r:d[k],g:d[k+1],b:d[k+2]},band=bandAt(bands,y); if(band){const base=dist(c,band.color),ink=dist(c,target); const chroma=Math.max(c.r,c.g,c.b)-Math.min(c.r,c.g,c.b); const threshold=index===0?92:index===1?72:66; hit=ink<threshold&&ink+18<base&&(index!==0||luma(c)>145)&&(index!==2||chroma>30);}}
+    o[k]=o[k+1]=o[k+2]=hit?0:255;o[k+3]=255;
+  }
+  return out;
+}
+function bandAt(bands:Band[],y:number):Band|undefined{return bands.find(b=>y>=b.y0&&y<=b.y1)}
+function scanCircleGeometry(source:ImageData,bg:Rgb){const {width:w,height:h,data:d}=source;let minX=w,minY=h,maxX=-1,maxY=-1;for(let y=0;y<h;y++)for(let x=0;x<w;x++){const k=(y*w+x)*4,c={r:d[k],g:d[k+1],b:d[k+2]};if(dist(c,bg)>55){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)}}if(maxX<0)return null;const rw=maxX-minX+1,rh=maxY-minY+1;if(Math.abs(rw-rh)>Math.max(rw,rh)*.12)return null;return{cx:(minX+maxX)/2,cy:(minY+maxY)/2,r:(rw+rh)/4}}
+function scanBands(source:ImageData,bg:Rgb,cx:number,cy:number,r:number):Band[]{const rows:{y:number;color:Rgb}[]=[];for(let y=Math.ceil(cy-r*.82);y<=Math.floor(cy+r*.82);y++){const samples:Rgb[]=[];for(let x=Math.ceil(cx-r*.72);x<=Math.floor(cx+r*.72);x++){const dx=x-cx,dy=y-cy;if(dx*dx+dy*dy>r*r)continue;const k=(y*source.width+x)*4,c={r:source.data[k],g:source.data[k+1],b:source.data[k+2]};if(dist(c,bg)>45)samples.push(c)}if(samples.length)rows.push({y,color:medianColor(samples)})}const out:Band[]=[];for(const row of rows){const last=out[out.length-1];if(!last||dist(last.color,row.color)>52)out.push({y0:row.y,y1:row.y,color:row.color});else{last.y1=row.y;last.color=mix(last.color,row.color,.12)}}return out.filter(b=>b.y1-b.y0>r*.08)}
+function cornerBackground(s:ImageData):Rgb{const pts=[[2,2],[s.width-3,2],[2,s.height-3],[s.width-3,s.height-3]],cs=pts.map(([x,y])=>{const k=(y*s.width+x)*4;return{r:s.data[k],g:s.data[k+1],b:s.data[k+2]}});return medianColor(cs)}
+function cornerSpread(s:ImageData,b:Rgb){const pts=[[2,2],[s.width-3,2],[2,s.height-3],[s.width-3,s.height-3]];return Math.max(...pts.map(([x,y])=>{const k=(y*s.width+x)*4;return dist({r:s.data[k],g:s.data[k+1],b:s.data[k+2]},b)}))}
+function medianColor(cs:Rgb[]):Rgb{const q=(k:keyof Rgb)=>[...cs].sort((a,b)=>a[k]-b[k])[Math.floor(cs.length/2)][k];return{r:q('r'),g:q('g'),b:q('b')}}
+function mix(a:Rgb,b:Rgb,t:number):Rgb{return{r:a.r*(1-t)+b.r*t,g:a.g*(1-t)+b.g*t,b:a.b*(1-t)+b.b*t}}
+function dist(a:Rgb,b:Rgb){return Math.hypot(a.r-b.r,a.g-b.g,a.b-b.b)}
+function luma(c:Rgb){return .2126*c.r+.7152*c.g+.0722*c.b}
+function rgb(c:Rgb){return `rgb(${Math.round(c.r)} ${Math.round(c.g)} ${Math.round(c.b)})`}
+function f(n:number){return Number(n.toFixed(2))}
