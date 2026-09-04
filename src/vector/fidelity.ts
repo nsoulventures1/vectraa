@@ -65,7 +65,13 @@ function renderBitmap(bitmap: ImageBitmap, width: number, height: number): Uint8
   canvas.height = height;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) throw new Error('Vectraa could not create a fidelity comparison canvas.');
-  context.clearRect(0, 0, width, height);
+  // Compare appearance rather than storage alpha. Logo conversion deliberately
+  // removes near-white backgrounds, so comparing transparent output against an
+  // opaque white source would punish the correct result and favour huge traces that
+  // reproduce background pixels. A neutral white proof reflects normal preview and
+  // print use while keeping foreground differences measurable.
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
   context.drawImage(bitmap, 0, 0, width, height);
   return context.getImageData(0, 0, width, height).data;
 }

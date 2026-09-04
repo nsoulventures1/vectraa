@@ -20,6 +20,7 @@ describe('multi-pass selection', () => {
   it('creates bounded balanced, cleaner and faithful candidates', () => {
     const candidates = buildCandidateOptions(DEFAULT_OPTIONS.logo);
     expect(candidates.map((item) => item.id)).toEqual(['balanced', 'cleaner', 'faithful']);
+    expect(new Set(candidates.map((item) => JSON.stringify(item.options))).size).toBe(3);
     for (const item of candidates) {
       expect(item.options.detail).toBeGreaterThanOrEqual(0);
       expect(item.options.detail).toBeLessThanOrEqual(100);

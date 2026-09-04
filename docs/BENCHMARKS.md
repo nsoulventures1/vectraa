@@ -14,6 +14,10 @@ Maintain representative source images for these five families:
 
 Do not optimize only for easy examples. Each family should eventually include clean, compressed, low-resolution, anti-aliased, and noisy cases.
 
+For the logo family, a noisy or compressed near-white canvas is background evidence,
+not automatically meaningful high-detail artwork. Regression checks must confirm that
+these inputs route through Logo Rescue and do not produce canvas-sized noise paths.
+
 ## Measurements
 
 Every benchmark records:

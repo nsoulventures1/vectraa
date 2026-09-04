@@ -39,6 +39,19 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   const lineArtLike=colorComplexity<0.24&&edgeDensity>=0.15&&(lightBackground>0.52||alphaCoverage>0.08)&&saturation<0.22;
   if(lineArtLike)return 'line-art';
 
+  // Logos exported by image generators or saved as compressed JPEGs often sit on a
+  // nearly-white canvas with low-amplitude texture. That texture can occupy many RGB
+  // buckets and make colorComplexity look photographic even though the meaningful
+  // artwork is sparse, centred brand ink. Route this shape before the generic
+  // high-detail guard; genuine photographs rarely combine a mostly-light canvas,
+  // limited dark coverage and modest edge density.
+  const noisyLightCanvasLogo = lightBackground>0.56
+    && darkInk>0.006
+    && darkInk<0.30
+    && edgeDensity<0.32
+    && (saturation>0.025||alphaCoverage>0.02);
+  if(noisyLightCanvasLogo)return 'logo';
+
   // Complexity is a stronger signal than a light canvas. This guard prevents
   // photographs/dense artwork from being swallowed by the broad brand-art route.
   if(colorComplexity>0.72||edgeDensity>0.42)return 'high-detail';

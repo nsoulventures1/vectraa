@@ -138,9 +138,11 @@ export class JsVectorEngine implements VectorEngine {
 function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
   return {
     ...options,
-    colors: Math.max(options.colors, 16),
-    detail: Math.max(options.detail, 92),
-    smoothing: Math.min(options.smoothing, 8),
+    // Keep the multi-pass variants meaningfully distinct. The previous 92/8/16
+    // clamp collapsed balanced, cleaner and faithful into the same expensive trace.
+    colors: Math.max(options.colors, 6),
+    detail: Math.max(options.detail, 84),
+    smoothing: Math.min(options.smoothing, 18),
   };
 }
 

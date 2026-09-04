@@ -29,7 +29,9 @@ export function toNeplexConfig(options: VectorizeOptions): NeplexConfig {
     polygon: false,
     layerDifference: binary ? 16 : Math.max(2, Math.round(12 - Math.min(options.colors, 48) / 5)),
     lengthThreshold: Math.max(2, Math.round(8 - detail * 5)),
-    maxIterations: detail > 0.8 ? 4 : detail > 0.55 ? 3 : 2,
+    // High-detail artwork gets one extra fitting pass. Logo presets may also use
+    // high geometric detail, but should not pay the photographic iteration cost.
+    maxIterations: options.preset === 'high-detail' ? 5 : detail > 0.8 ? 4 : detail > 0.55 ? 3 : 2,
     pathPrecision: detail > 0.8 ? 5 : 4,
   };
 }

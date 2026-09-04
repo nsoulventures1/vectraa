@@ -30,6 +30,17 @@ describe('classifyImageSignals', () => {
     expect(classifyImageSignals({ ...base, edgeDensity: 0.44, colorComplexity: 0.84, saturation: 0.5 })).toBe('high-detail');
   });
 
+  it('recognizes a sparse brand mark on a noisy near-white generated canvas', () => {
+    expect(classifyImageSignals({
+      ...base,
+      lightBackground: 0.78,
+      darkInk: 0.09,
+      edgeDensity: 0.18,
+      colorComplexity: 0.86,
+      saturation: 0.12,
+    })).toBe('logo');
+  });
+
   it('uses illustration for the middle ground', () => {
     expect(classifyImageSignals({ ...base, edgeDensity: 0.31, colorComplexity: 0.55, saturation: 0.42 })).toBe('illustration');
   });
