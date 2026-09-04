@@ -63,15 +63,38 @@ function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
   const mask = new Uint8Array(source.width * source.height);
   const bgLab = rgbToLab(background);
   const bgLum = luminance(background);
+  const noise = estimateBackgroundNoise(source, background);
+  const deltaThreshold = Math.max(5.5, Math.min(20, noise.deltaE95 + 2.5));
+  const darkerThreshold = Math.max(8, Math.min(22, noise.luma95 + 3));
   for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
     if (source.data[i + 3] < 10) continue;
     const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
     const hsv = rgbToHsv(rgb);
     const delta = deltaE76(rgbToLab(rgb), bgLab);
     const darker = bgLum - luminance(rgb);
-    if (delta >= 5.5 || darker >= 8 || hsv.s >= 0.07) mask[p] = 1;
+    const chromaticInk = hsv.s >= 0.07 && delta >= Math.max(4.5, deltaThreshold * 0.65);
+    if (delta >= deltaThreshold || darker >= darkerThreshold || chromaticInk) mask[p] = 1;
   }
   return mask;
+}
+
+function estimateBackgroundNoise(source: ImageData, background: Rgb): { deltaE95: number; luma95: number } {
+  const bgLab = rgbToLab(background);
+  const bgLum = luminance(background);
+  const deltas: number[] = [];
+  const lumas: number[] = [];
+  const band = Math.max(2, Math.round(Math.min(source.width, source.height) * 0.05));
+  const sx = Math.max(1, Math.floor(source.width / 100));
+  const sy = Math.max(1, Math.floor(source.height / 100));
+  for (let y = 0; y < source.height; y += sy) for (let x = 0; x < source.width; x += sx) {
+    if (x >= band && x < source.width - band && y >= band && y < source.height - band) continue;
+    const i = (y * source.width + x) * 4;
+    if (source.data[i + 3] < 20) continue;
+    const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
+    deltas.push(deltaE76(rgbToLab(rgb), bgLab));
+    lumas.push(Math.abs(luminance(rgb) - bgLum));
+  }
+  return { deltaE95: percentile(deltas, 0.95), luma95: percentile(lumas, 0.95) };
 }
 
 function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallbackMask: Uint8Array, maxColors: number): PaletteColor[] {
@@ -418,7 +441,12 @@ function erodeMask(mask: Uint8Array, width: number, height: number, radius: numb
   return out;
 }
 
-function cleanSpeckles(mask: Uint8Array, width: number, height: number): void { removeComponentsSmallerThan(mask, width, height, 2); }
+function cleanSpeckles(mask: Uint8Array, width: number, height: number): void {
+  // Scale the speckle floor with the canvas. A two-pixel fragment on a 3000px
+  // source is background noise, while genuine trademark dots and tagline glyphs
+  // remain comfortably above this conservative threshold.
+  removeComponentsSmallerThan(mask, width, height, Math.max(2, Math.round((width * height) / 450_000)));
+}
 function removeComponentsSmallerThan(mask: Uint8Array, width: number, height: number, minimum: number): void {
   const visited = new Uint8Array(mask.length); const queue = new Int32Array(mask.length);
   for (let start = 0; start < mask.length; start += 1) {
@@ -438,6 +466,11 @@ function hasForeground(mask: Uint8Array): boolean { return mask.some((v) => v ==
 function hasEnough(mask: Uint8Array, minimum: number): boolean { let n = 0; for (const value of mask) if (value && ++n >= minimum) return true; return false; }
 function luminance(p: Rgb): number { return 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b; }
 function median(values: number[]): number { const s = values.slice().sort((a, b) => a - b), m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+function percentile(values: number[], quantile: number): number {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * quantile)))];
+}
 function deltaE76(a: Lab, b: Lab): number { return Math.hypot(a.l - b.l, a.a - b.a, a.b - b.b); }
 function rgbToHsv(p: Rgb): { h: number; s: number; v: number } { const r = p.r / 255, g = p.g / 255, b = p.b / 255, max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min; let h = 0; if (d) { if (max === r) h = 60 * (((g - b) / d) % 6); else if (max === g) h = 60 * ((b - r) / d + 2); else h = 60 * ((r - g) / d + 4); } if (h < 0) h += 360; return { h, s: max === 0 ? 0 : d / max, v: max }; }
 function rgbToLab(rgb: Rgb): Lab {
