@@ -29,7 +29,7 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
   cleanSpeckles(foreground, source.width, source.height);
 
   const interior = erodeMask(foreground, source.width, source.height, 1);
-  const palette = extractPaletteLab(source, interior, foreground, Math.max(2, Math.min(8, options.colors || 6)));
+  const palette = extractPaletteLab(source, interior, foreground, background, Math.max(2, Math.min(8, options.colors || 6)));
   if (!palette.length) palette.push({ rgb: { r: 20, g: 42, b: 82 }, lab: rgbToLab({ r: 20, g: 42, b: 82 }), count: 1 });
 
   const labels = assignPixelsToPalette(source, foreground, palette, background);
@@ -97,7 +97,7 @@ function estimateBackgroundNoise(source: ImageData, background: Rgb): { deltaE95
   return { deltaE95: percentile(deltas, 0.95), luma95: percentile(lumas, 0.95) };
 }
 
-function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallbackMask: Uint8Array, maxColors: number): PaletteColor[] {
+function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallbackMask: Uint8Array, background: Rgb, maxColors: number): PaletteColor[] {
   const samples = collectSamples(source, hasEnough(interiorMask, 30) ? interiorMask : fallbackMask, 70000);
   if (!samples.length) return [];
 
@@ -132,8 +132,17 @@ function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallback
     } else merged.push({ ...cluster });
   }
 
+  const backgroundLab = rgbToLab(background);
+  const backgroundLuminance = luminance(background);
   return merged.filter((candidate, index, list) => {
     const hsv = rgbToHsv(candidate.rgb);
+    const backgroundDelta = deltaE76(candidate.lab, backgroundLab);
+    const luminanceDelta = Math.abs(luminance(candidate.rgb) - backgroundLuminance);
+    // JPEG/WebP compression creates several off-white clusters around a nominally
+    // white canvas. They are not brand colours and can otherwise consume every
+    // palette slot, crowding out a smaller but intentional accent such as gold.
+    // Saturated accents remain eligible even when relatively bright.
+    if (hsv.s < 0.12 && backgroundDelta < 14 && luminanceDelta < 24) return false;
     if (hsv.s >= 0.18) return true;
     return !list.some((other, j) => {
       if (j === index) return false;
