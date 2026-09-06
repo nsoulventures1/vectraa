@@ -98,7 +98,7 @@ function estimateBackgroundNoise(source: ImageData, background: Rgb): { deltaE95
 }
 
 function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallbackMask: Uint8Array, background: Rgb, maxColors: number): PaletteColor[] {
-  const samples = collectSamples(source, hasEnough(interiorMask, 30) ? interiorMask : fallbackMask, 70000);
+  const samples = collectSamples(source, hasEnough(interiorMask, 30) ? interiorMask : fallbackMask, 70000, background);
   if (!samples.length) return [];
 
   const k = Math.max(2, Math.min(maxColors, 7, samples.length));
@@ -380,17 +380,31 @@ function nearestPaletteDelta(source: Rgb, output: Rgb, palette: Rgb[]): number {
   return deltaE76(rgbToLab(nearest), rgbToLab(output));
 }
 
-function collectSamples(source: ImageData, mask: Uint8Array, limit: number): Array<{ rgb: Rgb; lab: Lab }> {
-  const count = mask.reduce((sum, v) => sum + v, 0);
+function collectSamples(source: ImageData, mask: Uint8Array, limit: number, background: Rgb): Array<{ rgb: Rgb; lab: Lab }> {
+  const backgroundLab = rgbToLab(background);
+  const backgroundLuminance = luminance(background);
+  let count = 0;
+  for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
+    if (!mask[p]) continue;
+    const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
+    if (isPaletteInk(rgb, backgroundLab, backgroundLuminance)) count += 1;
+  }
   const step = Math.max(1, Math.floor(count / limit));
   const out: Array<{ rgb: Rgb; lab: Lab }> = []; let seen = 0;
   for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
     if (!mask[p]) continue;
-    if ((seen++ % step) !== 0) continue;
     const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
+    if (!isPaletteInk(rgb, backgroundLab, backgroundLuminance)) continue;
+    if ((seen++ % step) !== 0) continue;
     out.push({ rgb, lab: rgbToLab(rgb) });
   }
   return out;
+}
+
+function isPaletteInk(rgb: Rgb, backgroundLab: Lab, backgroundLuminance: number): boolean {
+  const hsv = rgbToHsv(rgb);
+  if (hsv.s >= 0.12) return true;
+  return deltaE76(rgbToLab(rgb), backgroundLab) >= 14 || Math.abs(luminance(rgb) - backgroundLuminance) >= 24;
 }
 
 function initialiseKmeansPlusPlus(samples: Array<{ rgb: Rgb; lab: Lab }>, k: number): Lab[] {
