@@ -83,7 +83,6 @@ test('NSoul noisy-canvas regression preserves brand colours without tracing the 
 
   const qualityText = await page.locator('.result .score').innerText();
   const quality = Number(qualityText.match(/(\d+)\/100/)?.[1] ?? 0);
-  expect(quality, `Expected launch-quality NSoul output, received ${qualityText}`).toBeGreaterThanOrEqual(75);
 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /^Download SVG$/ }).click();
@@ -106,4 +105,8 @@ test('NSoul noisy-canvas regression preserves brand colours without tracing the 
   expect(hasNavy, `Missing navy in ${JSON.stringify(fills)}`).toBe(true);
   expect(hasGold, `Missing gold in ${JSON.stringify(fills)}`).toBe(true);
   expect(hasCanvasNoise, `Near-white canvas colours leaked into ${JSON.stringify(fills)}`).toBe(false);
+  expect(
+    quality,
+    `Expected launch-quality NSoul output, received ${qualityText}; ${svgBuffer.byteLength} bytes; fills ${JSON.stringify(fills)}`,
+  ).toBeGreaterThanOrEqual(75);
 });
