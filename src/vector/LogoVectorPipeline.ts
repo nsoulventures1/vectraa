@@ -50,13 +50,43 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
     }
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}">${paths.join('')}</svg>`;
+  const tracedSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}">${paths.join('')}</svg>`;
+  const { svg, removedPaths } = stripBackgroundPaths(tracedSvg, background);
   const structural = inspectSvg(svg);
-  const fidelity = await measureFidelity(source, svg, background, palette.map((p) => p.rgb));
+  let fidelity: { score: number; warnings: string[] };
+  try {
+    fidelity = await measureFidelity(source, svg, background, palette.map((p) => p.rgb));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'browser SVG rasterization failed';
+    fidelity = {
+      score: Math.min(90, structural.score),
+      warnings: [`Visual verification was unavailable (${reason}); retained the validated specialist logo trace.`],
+    };
+  }
   const warnings = [...structural.warnings, ...fidelity.warnings];
+  if (removedPaths) warnings.push(`Removed ${removedPaths} traced canvas-noise layer${removedPaths === 1 ? '' : 's'}.`);
   const score = Math.max(0, Math.min(structural.score, fidelity.score));
 
   return { svg, palette: palette.map((p) => p.rgb), quality: { ...structural, score, warnings } };
+}
+
+function stripBackgroundPaths(svg: string, background: Rgb): { svg: string; removedPaths: number } {
+  const backgroundLab = rgbToLab(background);
+  const backgroundLuminance = luminance(background);
+  let removedPaths = 0;
+  const cleaned = svg.replace(/<path\b[^>]*(?:\/>|>[\s\S]*?<\/path>)/gi, (path) => {
+    const fill = path.match(/fill="rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)"/i);
+    if (!fill) return path;
+    const rgb = { r: Number(fill[1]), g: Number(fill[2]), b: Number(fill[3]) };
+    const hsv = rgbToHsv(rgb);
+    const nearBackground = hsv.s < 0.12
+      && deltaE76(rgbToLab(rgb), backgroundLab) < 14
+      && Math.abs(luminance(rgb) - backgroundLuminance) < 24;
+    if (!nearBackground) return path;
+    removedPaths += 1;
+    return '';
+  }).replace(/<g\b[^>]*>\s*<\/g>/gi, '');
+  return { svg: cleaned, removedPaths };
 }
 
 function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
@@ -66,14 +96,21 @@ function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
   const noise = estimateBackgroundNoise(source, background);
   const deltaThreshold = Math.max(5.5, Math.min(20, noise.deltaE95 + 2.5));
   const darkerThreshold = Math.max(8, Math.min(22, noise.luma95 + 3));
+  const neutralDeltaThreshold = Math.max(12, Math.min(30, deltaThreshold * 1.8));
   for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
     if (source.data[i + 3] < 10) continue;
     const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
     const hsv = rgbToHsv(rgb);
     const delta = deltaE76(rgbToLab(rgb), bgLab);
     const darker = bgLum - luminance(rgb);
+    const nearCanvas = hsv.s < 0.12 && delta < 14 && Math.abs(darker) < 24;
+    if (nearCanvas) continue;
+    // Low-saturation JPEG/chroma noise may exceed the general Delta-E floor and
+    // percolate into one canvas-sized component. Require a much stronger neutral
+    // difference, while saturated brand colours retain the more sensitive gate.
     const chromaticInk = hsv.s >= 0.07 && delta >= Math.max(4.5, deltaThreshold * 0.65);
-    if (delta >= deltaThreshold || darker >= darkerThreshold || chromaticInk) mask[p] = 1;
+    const neutralInk = hsv.s < 0.07 && (darker >= darkerThreshold || delta >= neutralDeltaThreshold);
+    if (chromaticInk || neutralInk) mask[p] = 1;
   }
   return mask;
 }
@@ -186,7 +223,7 @@ function preserveAndCleanLayer(mask: Uint8Array, width: number, height: number):
     for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) if (dx || dy) neighbours += copy[(y + dy) * width + x + dx];
     if (neighbours >= 7) mask[p] = 1;
   }
-  removeComponentsSmallerThan(mask, width, height, 2);
+  removeComponentsSmallerThan(mask, width, height, Math.max(3, Math.round((width * height) / 150_000)));
 }
 
 function splitMacroAndMicro(mask: Uint8Array, width: number, height: number): LayerSplit {
@@ -355,12 +392,14 @@ async function measureFidelity(source: ImageData, svg: string, background: Rgb, 
   const vectorData = vc.getImageData(0, 0, width, height);
 
   const bgLab = rgbToLab(background);
+  const noise = estimateBackgroundNoise(source, background);
+  const fidelityThreshold = Math.max(7, Math.min(24, noise.deltaE95 + 3));
   let intersection = 0, union = 0, colorError = 0, colorSamples = 0;
   for (let i = 0; i < originalData.data.length; i += 4) {
     const a = { r: originalData.data[i], g: originalData.data[i + 1], b: originalData.data[i + 2] };
     const b = { r: vectorData.data[i], g: vectorData.data[i + 1], b: vectorData.data[i + 2] };
-    const af = deltaE76(rgbToLab(a), bgLab) > 7;
-    const bf = deltaE76(rgbToLab(b), bgLab) > 7;
+    const af = deltaE76(rgbToLab(a), bgLab) > fidelityThreshold;
+    const bf = deltaE76(rgbToLab(b), bgLab) > fidelityThreshold;
     if (af || bf) union += 1;
     if (af && bf) intersection += 1;
     if (af && bf) { colorError += nearestPaletteDelta(a, b, palette); colorSamples += 1; }

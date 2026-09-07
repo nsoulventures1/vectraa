@@ -1,9 +1,42 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const smokePng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAiUlEQVR4nGP8////f4YBBEwDafmoAxgYGBhY0AXko7fS1MKHS71R+AMeAqMOGHUARi4gFqCnZnJzD8kOQLcYXZxUh5AUBbgsJ1UN2Q6gBSDaAaT4jBS1QycERh1ASvYiRe3QCQEGBuJ8RmpBRHJJCLNgwIpiSi1EB0MrDYw6YFg6gHG0bzjiHQAA1OkkcCKX3TgAAAAASUVORK5CYII=',
   'base64',
 );
+
+async function createNoisyBrandFixture(page: Page): Promise<Buffer> {
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1254; canvas.height = 1254;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not create regression canvas.');
+    const pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 17;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      seed = (seed * 48271) % 2147483647;
+      const noise = seed % 10;
+      pixels.data[i] = 246 + noise;
+      pixels.data[i + 1] = 246 + ((noise + 3) % 10);
+      pixels.data[i + 2] = 246 + ((noise + 7) % 10);
+      pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    const navy = '#032049', gold = '#b8934d';
+    context.lineCap = 'round'; context.lineJoin = 'round';
+    context.strokeStyle = navy; context.lineWidth = 26;
+    context.beginPath(); context.arc(627, 420, 220, 0.23 * Math.PI, 1.77 * Math.PI); context.stroke();
+    context.strokeStyle = gold; context.beginPath(); context.arc(627, 420, 220, -0.23 * Math.PI, 0.23 * Math.PI); context.stroke();
+    context.fillStyle = navy; context.font = 'bold 300px sans-serif'; context.textAlign = 'center'; context.fillText('N', 627, 505);
+    context.strokeStyle = navy; context.lineWidth = 28; context.beginPath(); context.moveTo(450, 510); context.bezierCurveTo(535, 435, 635, 610, 795, 515); context.stroke();
+    context.strokeStyle = gold; context.lineWidth = 25; context.beginPath(); context.moveTo(470, 545); context.bezierCurveTo(575, 490, 645, 650, 775, 555); context.stroke();
+    context.fillStyle = navy; context.font = '120px sans-serif'; context.fillText('NSOUL', 627, 790);
+    context.fillStyle = gold; context.font = '54px sans-serif'; context.fillText('— V E N T U R E S —', 627, 875);
+    context.fillStyle = navy; context.font = '28px sans-serif'; context.fillText('SOLUTIONS · EXECUTION · EXCELLENCE', 627, 935);
+    return canvas.toDataURL('image/png');
+  });
+  return Buffer.from(dataUrl.split(',')[1], 'base64');
+}
 
 test('production converter loads, vectorizes, records local workspace metadata, and exposes SVG download', async ({ page }) => {
   await page.goto('/');
@@ -33,4 +66,47 @@ test('production converter loads, vectorizes, records local workspace metadata, 
   await expect(workspace.getByText(/Local-only workspace/i)).toBeVisible();
   await workspace.getByRole('button', { name: 'Clear history' }).click();
   await expect(workspace.getByText(/No conversion history yet/i)).toBeVisible();
+});
+
+test('NSoul noisy-canvas regression preserves brand colours without tracing the background', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto('/');
+
+  const input = page.locator('input[type="file"]');
+  await input.setInputFiles({ name: 'nsoul-noisy-logo.png', mimeType: 'image/png', buffer: await createNoisyBrandFixture(page) });
+  await expect(page.getByText(/Recommended:.*Logo/i)).toBeVisible();
+
+  const convert = page.getByRole('button', { name: /Make Best Vector|Rescue & Vectorize/ });
+  await expect(convert).toBeEnabled();
+  await convert.click();
+  await expect(page.getByAltText('Vectorized result')).toBeVisible({ timeout: 120_000 });
+
+  const qualityText = await page.locator('.result .score').innerText();
+  const quality = Number(qualityText.match(/(\d+)\/100/)?.[1] ?? 0);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: /^Download SVG$/ }).click();
+  const download = await downloadPromise;
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const svgBuffer = Buffer.concat(chunks);
+  const svg = svgBuffer.toString('utf8');
+
+  expect(svgBuffer.byteLength, 'NSoul logo SVG must remain practical for web and print workflows').toBeLessThan(1_000_000);
+  expect(svg).toMatch(/^<svg\b/);
+  expect(svg).not.toMatch(/<image\b/i);
+  expect(svg).not.toMatch(/<rect\b[^>]*(?:width="1254"|width="100%")/i);
+
+  const fills = [...svg.matchAll(/fill="rgb\((\d+),(\d+),(\d+)\)"/g)].map((match) => match.slice(1, 4).map(Number));
+  const hasNavy = fills.some(([r, g, b]) => b > r * 1.35 && b > g * 1.15 && r < 80);
+  const hasGold = fills.some(([r, g, b]) => r > 130 && g > 85 && g < r * 0.92 && b < g * 0.75);
+  const hasCanvasNoise = fills.some(([r, g, b]) => r > 220 && g > 220 && b > 220);
+  expect(hasNavy, `Missing navy in ${JSON.stringify(fills)}`).toBe(true);
+  expect(hasGold, `Missing gold in ${JSON.stringify(fills)}`).toBe(true);
+  expect(hasCanvasNoise, `Near-white canvas colours leaked into ${JSON.stringify(fills)}`).toBe(false);
+  expect(
+    quality,
+    `Expected launch-quality NSoul output, received ${qualityText}; ${svgBuffer.byteLength} bytes; fills ${JSON.stringify(fills)}`,
+  ).toBeGreaterThanOrEqual(75);
 });
