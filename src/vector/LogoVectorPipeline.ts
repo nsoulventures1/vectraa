@@ -94,6 +94,8 @@ function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
     const hsv = rgbToHsv(rgb);
     const delta = deltaE76(rgbToLab(rgb), bgLab);
     const darker = bgLum - luminance(rgb);
+    const nearCanvas = hsv.s < 0.12 && delta < 14 && Math.abs(darker) < 24;
+    if (nearCanvas) continue;
     // Low-saturation JPEG/chroma noise may exceed the general Delta-E floor and
     // percolate into one canvas-sized component. Require a much stronger neutral
     // difference, while saturated brand colours retain the more sensitive gate.
@@ -212,7 +214,7 @@ function preserveAndCleanLayer(mask: Uint8Array, width: number, height: number):
     for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) if (dx || dy) neighbours += copy[(y + dy) * width + x + dx];
     if (neighbours >= 7) mask[p] = 1;
   }
-  removeComponentsSmallerThan(mask, width, height, 2);
+  removeComponentsSmallerThan(mask, width, height, Math.max(3, Math.round((width * height) / 150_000)));
 }
 
 function splitMacroAndMicro(mask: Uint8Array, width: number, height: number): LayerSplit {
