@@ -87,14 +87,19 @@ function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
   const noise = estimateBackgroundNoise(source, background);
   const deltaThreshold = Math.max(5.5, Math.min(20, noise.deltaE95 + 2.5));
   const darkerThreshold = Math.max(8, Math.min(22, noise.luma95 + 3));
+  const neutralDeltaThreshold = Math.max(12, Math.min(30, deltaThreshold * 1.8));
   for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
     if (source.data[i + 3] < 10) continue;
     const rgb = { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2] };
     const hsv = rgbToHsv(rgb);
     const delta = deltaE76(rgbToLab(rgb), bgLab);
     const darker = bgLum - luminance(rgb);
+    // Low-saturation JPEG/chroma noise may exceed the general Delta-E floor and
+    // percolate into one canvas-sized component. Require a much stronger neutral
+    // difference, while saturated brand colours retain the more sensitive gate.
     const chromaticInk = hsv.s >= 0.07 && delta >= Math.max(4.5, deltaThreshold * 0.65);
-    if (delta >= deltaThreshold || darker >= darkerThreshold || chromaticInk) mask[p] = 1;
+    const neutralInk = hsv.s < 0.07 && (darker >= darkerThreshold || delta >= neutralDeltaThreshold);
+    if (chromaticInk || neutralInk) mask[p] = 1;
   }
   return mask;
 }
@@ -376,12 +381,14 @@ async function measureFidelity(source: ImageData, svg: string, background: Rgb, 
   const vectorData = vc.getImageData(0, 0, width, height);
 
   const bgLab = rgbToLab(background);
+  const noise = estimateBackgroundNoise(source, background);
+  const fidelityThreshold = Math.max(7, Math.min(24, noise.deltaE95 + 3));
   let intersection = 0, union = 0, colorError = 0, colorSamples = 0;
   for (let i = 0; i < originalData.data.length; i += 4) {
     const a = { r: originalData.data[i], g: originalData.data[i + 1], b: originalData.data[i + 2] };
     const b = { r: vectorData.data[i], g: vectorData.data[i + 1], b: vectorData.data[i + 2] };
-    const af = deltaE76(rgbToLab(a), bgLab) > 7;
-    const bf = deltaE76(rgbToLab(b), bgLab) > 7;
+    const af = deltaE76(rgbToLab(a), bgLab) > fidelityThreshold;
+    const bf = deltaE76(rgbToLab(b), bgLab) > fidelityThreshold;
     if (af || bf) union += 1;
     if (af && bf) intersection += 1;
     if (af && bf) { colorError += nearestPaletteDelta(a, b, palette); colorSamples += 1; }
