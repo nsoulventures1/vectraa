@@ -50,13 +50,34 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
     }
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}">${paths.join('')}</svg>`;
+  const tracedSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}">${paths.join('')}</svg>`;
+  const { svg, removedPaths } = stripBackgroundPaths(tracedSvg, background);
   const structural = inspectSvg(svg);
   const fidelity = await measureFidelity(source, svg, background, palette.map((p) => p.rgb));
   const warnings = [...structural.warnings, ...fidelity.warnings];
+  if (removedPaths) warnings.push(`Removed ${removedPaths} traced canvas-noise layer${removedPaths === 1 ? '' : 's'}.`);
   const score = Math.max(0, Math.min(structural.score, fidelity.score));
 
   return { svg, palette: palette.map((p) => p.rgb), quality: { ...structural, score, warnings } };
+}
+
+function stripBackgroundPaths(svg: string, background: Rgb): { svg: string; removedPaths: number } {
+  const backgroundLab = rgbToLab(background);
+  const backgroundLuminance = luminance(background);
+  let removedPaths = 0;
+  const cleaned = svg.replace(/<path\b[^>]*(?:\/>|>[\s\S]*?<\/path>)/gi, (path) => {
+    const fill = path.match(/fill="rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)"/i);
+    if (!fill) return path;
+    const rgb = { r: Number(fill[1]), g: Number(fill[2]), b: Number(fill[3]) };
+    const hsv = rgbToHsv(rgb);
+    const nearBackground = hsv.s < 0.12
+      && deltaE76(rgbToLab(rgb), backgroundLab) < 14
+      && Math.abs(luminance(rgb) - backgroundLuminance) < 24;
+    if (!nearBackground) return path;
+    removedPaths += 1;
+    return '';
+  }).replace(/<g\b[^>]*>\s*<\/g>/gi, '');
+  return { svg: cleaned, removedPaths };
 }
 
 function buildForegroundMask(source: ImageData, background: Rgb): Uint8Array {
