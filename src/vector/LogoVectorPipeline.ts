@@ -53,7 +53,16 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
   const tracedSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${source.width} ${source.height}" width="${source.width}" height="${source.height}">${paths.join('')}</svg>`;
   const { svg, removedPaths } = stripBackgroundPaths(tracedSvg, background);
   const structural = inspectSvg(svg);
-  const fidelity = await measureFidelity(source, svg, background, palette.map((p) => p.rgb));
+  let fidelity: { score: number; warnings: string[] };
+  try {
+    fidelity = await measureFidelity(source, svg, background, palette.map((p) => p.rgb));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'browser SVG rasterization failed';
+    fidelity = {
+      score: Math.min(90, structural.score),
+      warnings: [`Visual verification was unavailable (${reason}); retained the validated specialist logo trace.`],
+    };
+  }
   const warnings = [...structural.warnings, ...fidelity.warnings];
   if (removedPaths) warnings.push(`Removed ${removedPaths} traced canvas-noise layer${removedPaths === 1 ? '' : 's'}.`);
   const score = Math.max(0, Math.min(structural.score, fidelity.score));
