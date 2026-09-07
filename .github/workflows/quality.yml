@@ -65,3 +65,26 @@ jobs:
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
+
+  deploy:
+    name: Deploy verified build to Cloudflare
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://vectraa.04201012bd.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download verified production bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: vectraa-dist
+          path: dist
+      - name: Deploy Vectraa Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
