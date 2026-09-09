@@ -39,7 +39,7 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   const lineArtLike=colorComplexity<0.24&&edgeDensity>=0.15&&(lightBackground>0.52||alphaCoverage>0.08)&&saturation<0.22;
   if(lineArtLike)return 'line-art';
 
-  const productPhotoLike=lightBackground>0.38&&midtoneCoverage>0.025&&saturation<0.05;
+  const productPhotoLike=lightBackground>0.38&&midtoneCoverage>0.025;
   if(productPhotoLike)return 'high-detail';
 
   // Logos exported by image generators or saved as compressed JPEGs often sit on a
@@ -75,7 +75,7 @@ export function recommendationConfidence(signals:ImageSignals,preset:VectorPrese
 
 function measureSignals(pixels:Uint8ClampedArray,sampleWidth:number,sampleHeight:number,width:number,height:number):ImageSignals {
   const foregroundBins=new Set<number>(),gray=new Uint8Array(sampleWidth*sampleHeight);let transparent=0,visible=0,light=0,dark=0,saturated=0,midtones=0,foreground=0;
-  for(let i=0,p=0;i<pixels.length;i+=4,p++) {const r=pixels[i],g=pixels[i+1],b=pixels[i+2],a=pixels[i+3],lum=Math.round(.2126*r+.7152*g+.0722*b);gray[p]=lum;if(a<240)transparent++;if(a<24)continue;visible++;if(lum>235)light++;if(lum<80)dark++;const max=Math.max(r,g,b),min=Math.min(r,g,b),chroma=max-min;if(chroma>55)saturated++;if(lum>=72&&lum<=225&&chroma<42)midtones++;if(lum<232||chroma>28){foreground++;foregroundBins.add(((r>>5)<<6)|((g>>5)<<3)|(b>>5));}}
+  for(let i=0,p=0;i<pixels.length;i+=4,p++) {const r=pixels[i],g=pixels[i+1],b=pixels[i+2],a=pixels[i+3],lum=Math.round(.2126*r+.7152*g+.0722*b);gray[p]=lum;if(a<240)transparent++;if(a<24)continue;visible++;if(lum>235)light++;if(lum<80)dark++;const max=Math.max(r,g,b),min=Math.min(r,g,b),chroma=max-min;if(chroma>55)saturated++;if(lum>=72&&lum<=225&&chroma<18)midtones++;if(lum<232||chroma>28){foreground++;foregroundBins.add(((r>>5)<<6)|((g>>5)<<3)|(b>>5));}}
   let edgeCount=0,comparisons=0;for(let y=1;y<sampleHeight;y++)for(let x=1;x<sampleWidth;x++){const index=y*sampleWidth+x,current=gray[index];if(Math.abs(current-gray[index-1])>34)edgeCount++;if(Math.abs(current-gray[index-sampleWidth])>34)edgeCount++;comparisons+=2;}
   const total=sampleWidth*sampleHeight,visibleSafe=Math.max(1,visible),foregroundSafe=Math.max(1,foreground),paletteDensity=foregroundBins.size/Math.max(12,Math.min(64,Math.sqrt(foregroundSafe)*1.8));
   return {width,height,hasAlpha:transparent>0,alphaCoverage:transparent/total,edgeDensity:comparisons?edgeCount/comparisons:0,colorComplexity:Math.min(1,paletteDensity),lightBackground:light/visibleSafe,darkInk:dark/visibleSafe,saturation:saturated/visibleSafe,midtoneCoverage:midtones/visibleSafe};
