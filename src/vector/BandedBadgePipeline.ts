@@ -15,7 +15,7 @@ export function tryVectorizeBandedBadge(source: ImageData, options: VectorizeOpt
   if (!circle || circle.score < 0.58) return null;
 
   const bands = detectBands(source, circle.cx, circle.cy, circle.r);
-  if (bands.length < 2 || bands.length > 5) return null;
+  if (bands.length < 2 || bands.length > 5 || !hasContinuousBandBoundaries(source, circle.cx, circle.r, bands)) return null;
 
   const overlay = buildDetailOverlay(source, bg, circle.cx, circle.cy, circle.r, bands);
   const traced = ImageTracer.imagedataToSVG(overlay, {
@@ -205,6 +205,18 @@ function dominantColor(colors: Rgb[], tolerance: number): Rgb {
     if (cluster.length > best.length) best = cluster;
   }
   return medianRgb(best);
+}
+
+function hasContinuousBandBoundaries(source: ImageData, cx: number, r: number, bands: Band[]): boolean {
+  const offset = Math.max(3, r * 0.025);
+  return bands.slice(0, -1).every((band) => {
+    let changed = 0, total = 0;
+    for (let fraction = -0.72; fraction <= 0.72; fraction += 0.12) {
+      total += 1;
+      if (distance(pixel(source, cx + r * fraction, band.y1 - offset), pixel(source, cx + r * fraction, band.y1 + offset)) > 72) changed += 1;
+    }
+    return changed / Math.max(1, total) >= 0.62;
+  });
 }
 
 function mix(a: Rgb, b: Rgb, aWeight: number): Rgb {

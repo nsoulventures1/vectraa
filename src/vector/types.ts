@@ -20,6 +20,7 @@ export interface ImageAnalysis {
     colorComplexity: number;
     lightBackground: number;
     alphaCoverage: number;
+    midtoneCoverage: number;
   };
   warnings: string[];
 }
