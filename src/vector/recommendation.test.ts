@@ -10,7 +10,11 @@ function analysis(overrides: Partial<ImageAnalysis> = {}): ImageAnalysis {
     hasAlpha: false,
     likelyKind: 'logo',
     confidence: 90,
+<<<<<<< origin/main
     signals: { edgeDensity: 0.12, colorComplexity: 0.15, lightBackground: 0.8, alphaCoverage: 0, midtoneCoverage: 0.02 },
+=======
+    signals: { edgeDensity: 0.12, colorComplexity: 0.15, lightBackground: 0.8, alphaCoverage: 0, midtoneCoverage: 0.02, paletteConcentration: 0.82 },
+>>>>>>> local
     warnings: [],
     ...overrides,
   };
