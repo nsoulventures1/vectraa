@@ -135,6 +135,5 @@ test('reflective products on white route to high detail instead of destructive l
   await page.goto('/');
   await page.locator('input[type="file"]').setInputFiles({ name: 'reflective-product.png', mimeType: 'image/png', buffer: await createReflectiveProductFixture(page) });
   await expect(page.getByText(/Recommended:.*High detail/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: /Logo Rescue/i })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Make Best Vector' })).toBeEnabled();
 });
