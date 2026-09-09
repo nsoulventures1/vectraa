@@ -39,7 +39,7 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   const lineArtLike=colorComplexity<0.24&&edgeDensity>=0.15&&(lightBackground>0.52||alphaCoverage>0.08)&&saturation<0.22;
   if(lineArtLike)return 'line-art';
 
-  const productPhotoLike=lightBackground>0.38&&midtoneCoverage>0.075&&(colorComplexity>0.16||saturation>0.02);
+  const productPhotoLike=lightBackground>0.38&&midtoneCoverage>0.025&&saturation<0.18;
   if(productPhotoLike)return 'high-detail';
 
   // Logos exported by image generators or saved as compressed JPEGs often sit on a
@@ -52,7 +52,7 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
     && darkInk>0.006
     && darkInk<0.30
     && edgeDensity<0.32
-    && midtoneCoverage<0.075
+    && midtoneCoverage<0.025
     && (saturation>0.025||alphaCoverage>0.02);
   if(noisyLightCanvasLogo)return 'logo';
 
@@ -60,9 +60,9 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   // photographs/dense artwork from being swallowed by the broad brand-art route.
   if(colorComplexity>0.72||edgeDensity>0.42)return 'high-detail';
 
-  const scannedBrandArt=midtoneCoverage<0.10&&lightBackground>0.38&&darkInk>0.008&&darkInk<0.48&&edgeDensity<0.5&&colorComplexity<0.5&&(saturation>0.035||alphaCoverage>0.025);
-  const lightBackgroundBrandArt=midtoneCoverage<0.10&&lightBackground>0.48&&edgeDensity<0.42&&darkInk<0.42&&colorComplexity<0.5&&(saturation>0.045||colorComplexity<0.4);
-  const logoLike=scannedBrandArt||lightBackgroundBrandArt||(midtoneCoverage<0.10&&colorComplexity<0.46&&edgeDensity<0.34&&(saturation>0.07||alphaCoverage>0.04||lightBackground>0.35));
+  const scannedBrandArt=midtoneCoverage<0.04&&lightBackground>0.38&&darkInk>0.008&&darkInk<0.48&&edgeDensity<0.5&&colorComplexity<0.5&&(saturation>0.035||alphaCoverage>0.025);
+  const lightBackgroundBrandArt=midtoneCoverage<0.04&&lightBackground>0.48&&edgeDensity<0.42&&darkInk<0.42&&colorComplexity<0.5&&(saturation>0.045||colorComplexity<0.4);
+  const logoLike=scannedBrandArt||lightBackgroundBrandArt||(midtoneCoverage<0.04&&colorComplexity<0.46&&edgeDensity<0.34&&(saturation>0.07||alphaCoverage>0.04||lightBackground>0.35));
   if(logoLike)return 'logo';
   if(colorComplexity>0.72||edgeDensity>0.38)return 'high-detail';
   return 'illustration';
