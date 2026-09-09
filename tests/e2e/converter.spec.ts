@@ -97,8 +97,12 @@ test('NSoul noisy-canvas regression preserves brand colours without tracing the 
   expect(svg).toMatch(/^<svg\b/);
   expect(svg).not.toMatch(/<image\b/i);
   expect(svg).not.toMatch(/<rect\b[^>]*(?:width="1254"|width="100%")/i);
+  const pathCount = (svg.match(/<path\b/g) ?? []).length;
+  expect(pathCount, 'Flat brand artwork must not fragment into hundreds of shade-derived paths').toBeLessThan(180);
 
   const fills = [...svg.matchAll(/fill="rgb\((\d+),(\d+),(\d+)\)"/g)].map((match) => match.slice(1, 4).map(Number));
+  const distinctFills = new Set(fills.map((fill) => fill.join(',')));
+  expect(distinctFills.size, `Anti-alias shades leaked into the brand palette: ${JSON.stringify([...distinctFills])}`).toBeLessThanOrEqual(3);
   const hasNavy = fills.some(([r, g, b]) => b > r * 1.35 && b > g * 1.15 && r < 80);
   const hasGold = fills.some(([r, g, b]) => r > 130 && g > 85 && g < r * 0.92 && b < g * 0.75);
   const hasCanvasNoise = fills.some(([r, g, b]) => r > 220 && g > 220 && b > 220);
