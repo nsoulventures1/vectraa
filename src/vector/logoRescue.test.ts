@@ -9,11 +9,7 @@ const analysis: ImageAnalysis = {
   hasAlpha: false,
   likelyKind: 'logo',
   confidence: 90,
-<<<<<<< origin/main
-  signals: { edgeDensity: 0.28, colorComplexity: 0.18, lightBackground: 0.7, alphaCoverage: 0, midtoneCoverage: 0.02 },
-=======
   signals: { edgeDensity: 0.28, colorComplexity: 0.18, lightBackground: 0.7, alphaCoverage: 0, midtoneCoverage: 0.02, paletteConcentration: 0.78 },
->>>>>>> local
   warnings: [],
 };
 
