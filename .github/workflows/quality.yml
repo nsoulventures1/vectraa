@@ -52,9 +52,10 @@ jobs:
           # GitHub's runner may carry Google's Chrome apt source while its mirror is
           # mid-sync. Playwright supplies its own Chromium, so exclude that unrelated
           # source before installing the system libraries the browser needs.
-          if [ -f /etc/apt/sources.list.d/google-chrome.list ]; then
-            sudo mv /etc/apt/sources.list.d/google-chrome.list "$RUNNER_TEMP/google-chrome.list"
-          fi
+          for source in /etc/apt/sources.list.d/google-chrome*; do
+            [ -e "$source" ] || continue
+            sudo mv "$source" "$RUNNER_TEMP/$(basename "$source")"
+          done
           npx playwright install --with-deps chromium
       - name: Smoke test production converter
         run: npm run test:e2e
