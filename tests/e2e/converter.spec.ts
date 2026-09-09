@@ -38,6 +38,22 @@ async function createNoisyBrandFixture(page: Page): Promise<Buffer> {
   return Buffer.from(dataUrl.split(',')[1], 'base64');
 }
 
+async function createReflectiveProductFixture(page: Page): Promise<Buffer> {
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 900; canvas.height = 700;
+    const context = canvas.getContext('2d'); if (!context) throw new Error('Could not create product fixture.');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+    const steel = context.createLinearGradient(180, 0, 720, 0);
+    steel.addColorStop(0, '#444'); steel.addColorStop(.18, '#f7f7f7'); steel.addColorStop(.36, '#8a8a8a'); steel.addColorStop(.55, '#fff'); steel.addColorStop(.76, '#777'); steel.addColorStop(1, '#ddd');
+    context.fillStyle = steel; context.beginPath(); context.roundRect(190, 210, 520, 330, 70); context.fill();
+    context.fillStyle = '#111'; context.roundRect(610, 155, 220, 45, 22); context.fill();
+    context.fillStyle = '#176db6'; context.beginPath(); context.arc(470, 355, 70, 0, Math.PI * 2); context.fill();
+    context.fillStyle = '#111'; context.font = 'bold 30px sans-serif'; context.textAlign = 'center'; context.fillText('PRODUCT', 470, 365);
+    return canvas.toDataURL('image/png');
+  });
+  return Buffer.from(dataUrl.split(',')[1], 'base64');
+}
+
 test('production converter loads, vectorizes, records local workspace metadata, and exposes SVG download', async ({ page }) => {
   await page.goto('/');
 
@@ -113,4 +129,12 @@ test('NSoul noisy-canvas regression preserves brand colours without tracing the 
     quality,
     `Expected launch-quality NSoul output, received ${qualityText}; ${svgBuffer.byteLength} bytes; fills ${JSON.stringify(fills)}`,
   ).toBeGreaterThanOrEqual(75);
+});
+
+test('reflective products on white route to high detail instead of destructive logo rescue', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('input[type="file"]').setInputFiles({ name: 'reflective-product.png', mimeType: 'image/png', buffer: await createReflectiveProductFixture(page) });
+  await expect(page.getByText(/Recommended:.*High detail/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Logo Rescue/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Make Best Vector' })).toBeEnabled();
 });
