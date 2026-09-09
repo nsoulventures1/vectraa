@@ -54,8 +54,6 @@ async function createReflectiveProductFixture(page: Page): Promise<Buffer> {
   return Buffer.from(dataUrl.split(',')[1], 'base64');
 }
 
-<<<<<<< origin/main
-=======
 async function createDarkEmblemFixture(page: Page): Promise<Buffer> {
   const dataUrl = await page.evaluate(() => {
     const canvas = document.createElement('canvas'); canvas.width = 900; canvas.height = 900;
@@ -82,7 +80,6 @@ async function createDarkEmblemFixture(page: Page): Promise<Buffer> {
   return Buffer.from(dataUrl.split(',')[1], 'base64');
 }
 
->>>>>>> local
 test('production converter loads, vectorizes, records local workspace metadata, and exposes SVG download', async ({ page }) => {
   await page.goto('/');
 
@@ -168,8 +165,6 @@ test('reflective products on white route to high detail instead of destructive l
   const signals = await analysisBar.getAttribute('data-analysis');
   await expect(analysisBar.locator('.analysisBadge'), `Measured product signals: ${signals}`).toContainText(/Recommended:\s*High detail/i);
   await expect(page.locator('.pills button', { hasText: 'High detail' })).toHaveClass(/selected/);
-<<<<<<< origin/main
-=======
 });
 
 test('dark flat-colour emblems use the clean logo tracer without band seams or palette noise', async ({ page }) => {
@@ -193,5 +188,4 @@ test('dark flat-colour emblems use the clean logo tracer without band seams or p
   expect((svg.match(/<path\b/g) ?? []).length).toBeLessThan(300);
   const fills = new Set([...svg.matchAll(/fill="rgb\((\d+),(\d+),(\d+)\)"/g)].map((match) => match.slice(1, 4).join(',')));
   expect(fills.size, `Flat emblem leaked noisy shades: ${JSON.stringify([...fills])}`).toBeLessThanOrEqual(4);
->>>>>>> local
 });
