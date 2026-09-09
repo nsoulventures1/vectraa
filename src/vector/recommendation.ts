@@ -26,7 +26,7 @@ export function recommendVectorWorkflow(analysis: ImageAnalysis): VectorRecommen
     reasons.push('High-detail artwork detected; general SVG keeps the workflow neutral until you choose a destination.');
   }
 
-  const logoRescue = preset === 'logo' && !analysis.hasAlpha && analysis.signals.lightBackground > 0.35 && analysis.signals.midtoneCoverage < 0.075;
+  const logoRescue = preset === 'logo' && !analysis.hasAlpha && analysis.signals.lightBackground > 0.35 && analysis.signals.midtoneCoverage < 0.025;
   if (logoRescue) reasons.push('A light raster background was detected, so Logo Rescue can improve tracing before vectorization.');
   if (analysis.megapixels > 12) reasons.push('Large source detected; Vectraa will keep processing local but vectorization may take longer.');
 
