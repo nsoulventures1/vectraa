@@ -39,7 +39,7 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   const lineArtLike=colorComplexity<0.24&&edgeDensity>=0.15&&(lightBackground>0.52||alphaCoverage>0.08)&&saturation<0.22;
   if(lineArtLike)return 'line-art';
 
-  const productPhotoLike=lightBackground>0.38&&midtoneCoverage>0.025;
+  const productPhotoLike=lightBackground>0.38&&(midtoneCoverage>0.12||(midtoneCoverage>0.025&&saturation<0.03));
   if(productPhotoLike)return 'high-detail';
 
   // Logos exported by image generators or saved as compressed JPEGs often sit on a
