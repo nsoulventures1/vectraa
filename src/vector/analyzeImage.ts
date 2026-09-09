@@ -42,7 +42,7 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   const productPhotoLike=lightBackground>0.38&&(
     midtoneCoverage>0.12
     || (midtoneCoverage>0.025&&saturation<0.03)
-    || (edgeDensity<0.06&&midtoneCoverage>0.006&&colorComplexity>0.18)
+    || (edgeDensity<0.06&&midtoneCoverage>0.006&&colorComplexity>0.18&&colorComplexity<0.55)
   );
   if(productPhotoLike)return 'high-detail';
 
