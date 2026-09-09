@@ -39,6 +39,7 @@ describe('classifyImageSignals', () => {
       edgeDensity: 0.18,
       colorComplexity: 0.86,
       saturation: 0.12,
+      midtoneCoverage: 0.01,
     })).toBe('logo');
   });
 
