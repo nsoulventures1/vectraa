@@ -12,6 +12,7 @@ const base: ImageSignals = {
   darkInk: 0.15,
   saturation: 0.2,
   midtoneCoverage: 0.03,
+  paletteConcentration: 0.55,
 };
 
 describe('classifyImageSignals', () => {
@@ -44,7 +45,15 @@ describe('classifyImageSignals', () => {
   });
 
   it('does not mistake a reflective product photograph on white for a logo', () => {
-    expect(classifyImageSignals({ ...base, lightBackground: 0.58, darkInk: 0.12, edgeDensity: 0.19, colorComplexity: 0.78, saturation: 0.02, midtoneCoverage: 0.24 })).toBe('high-detail');
+    expect(classifyImageSignals({ ...base, lightBackground: 0.58, darkInk: 0.12, edgeDensity: 0.19, colorComplexity: 0.78, saturation: 0.02, midtoneCoverage: 0.24, paletteConcentration: 0.28 })).toBe('high-detail');
+  });
+
+  it('recognizes a compressed flat-colour emblem on a dark canvas as a logo', () => {
+    expect(classifyImageSignals({ ...base, lightBackground: 0.01, darkInk: 0.62, edgeDensity: 0.24, colorComplexity: 0.91, saturation: 0.72, midtoneCoverage: 0.01, paletteConcentration: 0.86 })).toBe('logo');
+  });
+
+  it('keeps a dark photographic scene out of the flat-emblem route', () => {
+    expect(classifyImageSignals({ ...base, lightBackground: 0.02, darkInk: 0.55, edgeDensity: 0.29, colorComplexity: 0.92, saturation: 0.35, midtoneCoverage: 0.08, paletteConcentration: 0.31 })).toBe('high-detail');
   });
 
   it('uses illustration for the middle ground', () => {

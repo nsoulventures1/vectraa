@@ -21,6 +21,7 @@ export interface ImageAnalysis {
     lightBackground: number;
     alphaCoverage: number;
     midtoneCoverage: number;
+    paletteConcentration: number;
   };
   warnings: string[];
 }

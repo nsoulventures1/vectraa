@@ -17,7 +17,7 @@ import { addConversionHistoryItem, clearConversionHistory, createHistoryItem, re
 import { WorkspacePanel } from './workspace/WorkspacePanel';
 
 const engine = new JsVectorEngine();
-const ENGINE_BUILD = '2026.09.09.4-market';
+const ENGINE_BUILD = '2026.09.09.5-final';
 const PRESETS: Array<{ id: VectorPreset; label: string }> = [
   { id: 'logo', label: 'Logo' }, { id: 'illustration', label: 'Illustration' }, { id: 'line-art', label: 'Line art' }, { id: 'signature', label: 'Signature' }, { id: 'high-detail', label: 'High detail' },
 ];

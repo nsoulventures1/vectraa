@@ -54,6 +54,32 @@ async function createReflectiveProductFixture(page: Page): Promise<Buffer> {
   return Buffer.from(dataUrl.split(',')[1], 'base64');
 }
 
+async function createDarkEmblemFixture(page: Page): Promise<Buffer> {
+  const dataUrl = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 900; canvas.height = 900;
+    const context = canvas.getContext('2d'); if (!context) throw new Error('Could not create emblem fixture.');
+    context.fillStyle = '#030303'; context.fillRect(0, 0, 900, 900);
+    context.fillStyle = '#11108d'; context.beginPath(); context.arc(450, 450, 350, 0, Math.PI * 2); context.fill();
+    context.strokeStyle = '#f4b900'; context.lineWidth = 24; context.beginPath(); context.arc(450, 450, 335, 0, Math.PI * 2); context.stroke();
+    context.lineWidth = 15; context.beginPath(); context.arc(450, 450, 255, 0, Math.PI * 2); context.stroke();
+    context.fillStyle = '#f4b900'; context.font = 'bold 62px sans-serif'; context.textAlign = 'center';
+    context.fillText('EASTERN NAVAL', 450, 255); context.fillText('COMMAND', 450, 700);
+    context.font = 'bold 200px serif'; context.fillText('⚓', 450, 535);
+    // Deterministic low-amplitude compression-like noise should not turn a
+    // three-ink badge into photographic high-detail artwork.
+    const image = context.getImageData(0, 0, 900, 900); let seed = 29;
+    for (let i = 0; i < image.data.length; i += 4) {
+      seed = (seed * 48271) % 2147483647; const n = (seed % 5) - 2;
+      image.data[i] = Math.max(0, Math.min(255, image.data[i] + n));
+      image.data[i + 1] = Math.max(0, Math.min(255, image.data[i + 1] + n));
+      image.data[i + 2] = Math.max(0, Math.min(255, image.data[i + 2] + n));
+    }
+    context.putImageData(image, 0, 0);
+    return canvas.toDataURL('image/png');
+  });
+  return Buffer.from(dataUrl.split(',')[1], 'base64');
+}
+
 test('production converter loads, vectorizes, records local workspace metadata, and exposes SVG download', async ({ page }) => {
   await page.goto('/');
 
@@ -139,4 +165,27 @@ test('reflective products on white route to high detail instead of destructive l
   const signals = await analysisBar.getAttribute('data-analysis');
   await expect(analysisBar.locator('.analysisBadge'), `Measured product signals: ${signals}`).toContainText(/Recommended:\s*High detail/i);
   await expect(page.locator('.pills button', { hasText: 'High detail' })).toHaveClass(/selected/);
+});
+
+test('dark flat-colour emblems use the clean logo tracer without band seams or palette noise', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto('/');
+  await page.locator('input[type="file"]').setInputFiles({ name: 'dark-emblem.png', mimeType: 'image/png', buffer: await createDarkEmblemFixture(page) });
+  const analysisBar = page.locator('.analysisBar[aria-live="polite"]');
+  const signals = await analysisBar.getAttribute('data-analysis');
+  await expect(analysisBar.locator('.analysisBadge'), `Measured emblem signals: ${signals}`).toContainText(/Recommended:\s*Logo/i);
+  await page.getByRole('button', { name: /Make Best Vector|Rescue & Vectorize/ }).click();
+  await expect(page.getByAltText('Vectorized result')).toBeVisible({ timeout: 120_000 });
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: /^Download SVG$/ }).click();
+  const download = await downloadPromise; const stream = await download.createReadStream(); const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const svgBuffer = Buffer.concat(chunks); const svg = svgBuffer.toString('utf8');
+  expect(svgBuffer.byteLength).toBeLessThan(1_000_000);
+  expect(svg).not.toMatch(/<image\b/i);
+  expect(svg).not.toContain('data-vectraa-centred-badge');
+  expect((svg.match(/<path\b/g) ?? []).length).toBeLessThan(300);
+  const fills = new Set([...svg.matchAll(/fill="rgb\((\d+),(\d+),(\d+)\)"/g)].map((match) => match.slice(1, 4).join(',')));
+  expect(fills.size, `Flat emblem exceeded its bounded specialist palette: ${JSON.stringify([...fills])}`).toBeLessThanOrEqual(6);
 });
