@@ -171,7 +171,7 @@ function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallback
 
   const backgroundLab = rgbToLab(background);
   const backgroundLuminance = luminance(background);
-  return merged.filter((candidate, index, list) => {
+  const filtered = merged.filter((candidate, index, list) => {
     const hsv = rgbToHsv(candidate.rgb);
     const backgroundDelta = deltaE76(candidate.lab, backgroundLab);
     const luminanceDelta = Math.abs(luminance(candidate.rgb) - backgroundLuminance);
@@ -186,7 +186,25 @@ function extractPaletteLab(source: ImageData, interiorMask: Uint8Array, fallback
       const oh = rgbToHsv(other.rgb);
       return oh.s > hsv.s + 0.28 && deltaE76(candidate.lab, other.lab) < 18;
     });
-  }).slice(0, maxColors);
+  });
+  return mergePaletteFamilies(filtered).slice(0, maxColors);
+}
+
+function mergePaletteFamilies(colors: PaletteColor[]): PaletteColor[] {
+  const families: PaletteColor[] = [];
+  for (const color of [...colors].sort((a, b) => b.count - a.count)) {
+    const hsv = rgbToHsv(color.rgb);
+    const family = families.find((candidate) => {
+      const other = rgbToHsv(candidate.rgb);
+      const hueDistance = Math.min(Math.abs(hsv.h - other.h), 360 - Math.abs(hsv.h - other.h));
+      return hueDistance < 42
+        && deltaE76(color.lab, candidate.lab) < 30
+        && Math.abs(hsv.v - other.v) < 0.42;
+    });
+    if (family) family.count += color.count;
+    else families.push({ ...color });
+  }
+  return families;
 }
 
 function assignPixelsToPalette(source: ImageData, foreground: Uint8Array, palette: PaletteColor[], background: Rgb): Int16Array {
