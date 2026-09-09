@@ -75,8 +75,26 @@ async function evaluateCandidate(
     fidelity = null;
   }
   const health = assessVectorResult(result).overallScore;
-  const combinedScore = combineScores(fidelity?.score ?? null, health, result.elapsedMs);
+  const combinedScore = combineScores(fidelity?.score ?? null, health, result.elapsedMs)
+    - complexityPenalty(result, variant.options.preset);
   return { ...variant, result, fidelity, combinedScore };
+}
+
+function complexityPenalty(result: VectorResult, preset: VectorPreset): number {
+  const { paths, nodesApprox, bytes } = result.quality;
+  const budgets = preset === 'signature'
+    ? { paths: 120, nodes: 2_500, bytes: 180_000 }
+    : preset === 'line-art'
+      ? { paths: 350, nodes: 8_000, bytes: 500_000 }
+      : preset === 'logo'
+        ? { paths: 500, nodes: 12_000, bytes: 750_000 }
+        : preset === 'illustration'
+          ? { paths: 1_200, nodes: 30_000, bytes: 1_500_000 }
+          : { paths: 2_500, nodes: 70_000, bytes: 3_500_000 };
+  const excess = Math.max(0, paths / budgets.paths - 1)
+    + Math.max(0, nodesApprox / budgets.nodes - 1)
+    + Math.max(0, bytes / budgets.bytes - 1);
+  return Math.min(18, Math.round(excess * 4));
 }
 
 export function shouldStopEarly(candidate: MultiPassCandidate): { stop: boolean; reason: string | null } {
