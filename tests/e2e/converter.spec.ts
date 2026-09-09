@@ -134,6 +134,9 @@ test('NSoul noisy-canvas regression preserves brand colours without tracing the 
 test('reflective products on white route to high detail instead of destructive logo rescue', async ({ page }) => {
   await page.goto('/');
   await page.locator('input[type="file"]').setInputFiles({ name: 'reflective-product.png', mimeType: 'image/png', buffer: await createReflectiveProductFixture(page) });
-  await expect(page.locator('.analysisBar[aria-live="polite"] .analysisBadge')).toContainText(/Recommended:\s*High detail/i);
+  const analysisBar = page.locator('.analysisBar[aria-live="polite"]');
+  await expect(analysisBar.locator('.analysisBadge')).toBeVisible();
+  const signals = await analysisBar.getAttribute('data-analysis');
+  await expect(analysisBar.locator('.analysisBadge'), `Measured product signals: ${signals}`).toContainText(/Recommended:\s*High detail/i);
   await expect(page.locator('.pills button', { hasText: 'High detail' })).toHaveClass(/selected/);
 });
