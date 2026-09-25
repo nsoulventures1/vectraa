@@ -15,9 +15,13 @@ import { RunGuard } from './vector/runGuard';
 import type { ImageAnalysis, VectorPreset, VectorResult } from './vector/types';
 import { addConversionHistoryItem, clearConversionHistory, createHistoryItem, readConversionHistory, type ConversionHistoryItem } from './workspace/history';
 import { WorkspacePanel } from './workspace/WorkspacePanel';
+import './marketing.css';
+import { trackGrowthEvent } from './marketing/analytics';
+import { currentLandingPage, LANDING_PAGES } from './marketing/landing';
+import { applyPageMetadata } from './marketing/metadata';
 
 const engine = new JsVectorEngine();
-const ENGINE_BUILD = '2026.09.09.5-final';
+const ENGINE_BUILD = '2026.09.09.4-market';
 const PRESETS: Array<{ id: VectorPreset; label: string }> = [
   { id: 'logo', label: 'Logo' }, { id: 'illustration', label: 'Illustration' }, { id: 'line-art', label: 'Line art' }, { id: 'signature', label: 'Signature' }, { id: 'high-detail', label: 'High detail' },
 ];
@@ -27,6 +31,7 @@ export default function App() {
   const analysisRun = useRef(new RunGuard());
   const conversionRun = useRef(new RunGuard());
   const capabilities = useMemo(() => detectBrowserCapabilities(), []);
+  const landingPage = useMemo(() => currentLandingPage(), []);
   const supportError = browserSupportMessage(capabilities);
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
@@ -51,6 +56,8 @@ export default function App() {
   const purposeProfile = PURPOSES.find((item) => item.id === purpose) ?? PURPOSES[0];
   const purposeAssessment = useMemo(() => result ? assessPurpose(result.svg, purpose) : null, [result, purpose]);
 
+  useEffect(() => applyPageMetadata(landingPage), [landingPage]);
+
   useEffect(() => {
     if (!capabilities.supported) return;
     function onPaste(event: ClipboardEvent) {
@@ -67,12 +74,14 @@ export default function App() {
     const run = analysisRun.current.next();
     conversionRun.current.invalidate();
     setFile(next); setAnalysis(null); setRecommendation(null); setAnalyzing(true); setRunning(false); setResult(null); setFidelity(null); setSelectedPass(null); setPassCount(0); setLogoRescue(false); setPurpose('general'); setError(null); setZoom(1); setCompare(50);
+    trackGrowthEvent('image_selected', { format: next.type, source_page: landingPage?.path ?? '/' });
     try {
       const nextAnalysis = await analyzeImage(next);
       if (!analysisRun.current.isCurrent(run)) return;
       const nextRecommendation = recommendVectorWorkflow(nextAnalysis);
       setAnalysis(nextAnalysis); setRecommendation(nextRecommendation); setPreset(nextRecommendation.preset); setPurpose(nextRecommendation.purpose); setLogoRescue(nextRecommendation.logoRescue);
-    } catch (err) { if (analysisRun.current.isCurrent(run)) setError(err instanceof Error ? err.message : 'Image analysis failed. Try another image or refresh the page.'); }
+      trackGrowthEvent('analysis_completed', { preset: nextRecommendation.preset, confidence: nextAnalysis.confidence, logo_rescue: nextRecommendation.logoRescue });
+    } catch (err) { if (analysisRun.current.isCurrent(run)) { setError(err instanceof Error ? err.message : 'Image analysis failed. Try another image or refresh the page.'); trackGrowthEvent('conversion_failed', { phase: 'analysis' }); } }
     finally { if (analysisRun.current.isCurrent(run)) setAnalyzing(false); }
   }
 
@@ -81,6 +90,7 @@ export default function App() {
     const run = conversionRun.current.next();
     const sourceFile = file;
     setRunning(true); setError(null); setFidelity(null); setSelectedPass(null);
+    trackGrowthEvent('conversion_started', { preset, purpose, logo_rescue: logoRescue });
     try {
       const processingFile = logoRescue && analysis ? await preprocessLogoForRescue(sourceFile, recommendedLogoRescueOptions(analysis)) : sourceFile;
       if (!conversionRun.current.isCurrent(run)) return;
@@ -88,18 +98,30 @@ export default function App() {
       const multi = await vectorizeBestOf(engine, processingFile, base, 3);
       if (!conversionRun.current.isCurrent(run)) return;
       setResult(multi.best.result); setFidelity(multi.best.fidelity); setSelectedPass(multi.best.id); setPassCount(multi.candidates.length);
+      trackGrowthEvent('conversion_completed', { preset, purpose, quality: multi.best.result.quality.score, fidelity: multi.best.fidelity?.score, paths: multi.best.result.quality.paths });
       setHistory(addConversionHistoryItem(createHistoryItem({ fileName: sourceFile.name, preset, purpose, qualityScore: multi.best.result.quality.score, fidelityScore: multi.best.fidelity?.score, paths: multi.best.result.quality.paths, bytes: multi.best.result.quality.bytes })));
     } catch (err) {
-      if (conversionRun.current.isCurrent(run)) { setResult(null); setError(err instanceof Error ? `${err.message} Try a smaller or simpler image, or refresh and retry.` : 'Vectorization failed. Try a smaller or simpler image, or refresh and retry.'); }
+      if (conversionRun.current.isCurrent(run)) { setResult(null); setError(err instanceof Error ? `${err.message} Try a smaller or simpler image, or refresh and retry.` : 'Vectorization failed. Try a smaller or simpler image, or refresh and retry.'); trackGrowthEvent('conversion_failed', { phase: 'vectorization', preset }); }
     } finally { if (conversionRun.current.isCurrent(run)) setRunning(false); }
   }
 
-  function download() { if (result) downloadSvg(result.svg, svgFilename(file?.name, `${logoRescue ? '-rescued' : ''}${purposeProfile.suffix}`)); }
+  function download() { if (result) { downloadSvg(result.svg, svgFilename(file?.name, `${logoRescue ? '-rescued' : ''}${purposeProfile.suffix}`)); trackGrowthEvent('svg_downloaded', { preset, purpose, quality: result.quality.score }); } }
   function clearHistory() { clearConversionHistory(); setHistory([]); }
+  async function shareSite() {
+    const shareData = { title: 'Vectraa — Free private image to SVG converter', text: 'Convert JPG, PNG and WebP images into real SVG paths in your browser.', url: window.location.href };
+    try {
+      if (navigator.share) await navigator.share(shareData);
+      else await navigator.clipboard.writeText(window.location.href);
+      trackGrowthEvent('site_shared', { source_page: landingPage?.path ?? '/' });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setError('Could not share this page. Copy the address from your browser and try again.');
+    }
+  }
 
   return <main>
     <header className="nav"><a className="brand" href="/">Vectraa<span>.</span></a><nav className="navLinks"><a href="#workspace">Workspace</a><a href="#how-it-works">How it works</a><a href="#privacy">Privacy</a><a href="#faq">FAQ</a></nav><div className="privacy">Private by design · processed on your device</div></header>
-    <section className="hero"><p className="eyebrow">FREE AI VECTOR STUDIO</p><h1>Anything <span>→</span> Vector.</h1><p className="lead">Turn JPG, PNG and WebP artwork into clean, scalable SVG — directly in your browser.</p><div className="modeRow"><button className="mode active">Upload an image</button><button className="mode" disabled>Describe what you want <b>Soon</b></button></div></section>
+    <section className="hero"><p className="eyebrow">{landingPage?.eyebrow ?? 'FREE PRIVATE VECTOR STUDIO'}</p><h1>{landingPage ? landingPage.heading : <>Anything <span>→</span> Vector.</>}</h1><p className="lead">{landingPage?.lead ?? 'Turn JPG, PNG and WebP artwork into clean, scalable SVG — directly in your browser.'}</p><div className="modeRow"><button className="mode active" onClick={() => inputRef.current?.click()}>Upload an image</button><button className="mode" disabled>Describe what you want <b>Soon</b></button></div></section>
     {supportError && <div role="alert" className="error">{supportError}</div>}
     <section className="studio"><input ref={inputRef} hidden disabled={!capabilities.supported} type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { void choose(e.target.files?.[0]); e.currentTarget.value = ''; }} /><div className="source card" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (capabilities.supported) void choose(e.dataTransfer.files[0]); }}><div className="cardHead"><span>ORIGINAL</span>{file && <button onClick={() => inputRef.current?.click()}>Replace</button>}</div>{sourceUrl ? <div className="canvas checker"><img style={{ transform: `scale(${zoom})` }} src={sourceUrl} alt="Uploaded original" /></div> : <button className="drop" disabled={!capabilities.supported} onClick={() => inputRef.current?.click()}><span className="uploadIcon">↑</span><strong>{capabilities.supported ? 'Drop your image here' : 'Browser upgrade required'}</strong><small>{capabilities.supported ? 'click to browse or paste from clipboard · JPG, PNG, WebP · up to 20 MB' : 'Use a current Chrome, Edge, Firefox or Safari browser to run local conversion.'}</small></button>}</div><div className="result card"><div className="cardHead"><span>VECTOR</span>{result && <span className="score">Quality {result.quality.score}/100</span>}</div>{svgUrl ? <div className="canvas checker"><img style={{ transform: `scale(${zoom})` }} src={svgUrl} alt="Vectorized result" /></div> : <div className="empty"><span>◇</span><strong>Your vector will appear here</strong><small>Real SVG paths — not a raster image wrapped in an SVG file.</small></div>}</div></section>
     {(sourceUrl || svgUrl) && <section className="inspectionBar"><span>Inspect</span><div className="zoomButtons">{[1, 2, 4].map((level) => <button key={level} className={zoom === level ? 'selected' : ''} onClick={() => setZoom(level)}>{level}×</button>)}</div>{result && <span className="hint">Use 4× to inspect edge smoothness and tracing detail.</span>}</section>}
@@ -116,5 +138,8 @@ export default function App() {
     <section id="how-it-works" className="contentSection"><span className="sectionKicker">HOW IT WORKS</span><h2>From raster image to genuine SVG paths.</h2><div className="contentGrid"><article><b>1</b><h3>Analyze</h3><p>Vectraa inspects the image locally and recommends a tracing workflow based on detail, colors, transparency and edge structure.</p></article><article><b>2</b><h3>Trace intelligently</h3><p>Adaptive passes balance visual similarity against clean, editable vector structure instead of blindly returning the first trace.</p></article><article><b>3</b><h3>Inspect and export</h3><p>Compare the original with the SVG, review vector health, choose the intended use, and download a clean SVG file.</p></article></div></section>
     <section id="privacy" className="contentSection privacySection"><span className="sectionKicker">PRIVACY</span><h2>Your artwork stays on your device for basic conversion.</h2><p className="sectionLead">Vectraa’s core JPG, PNG and WebP conversion is designed to run in your browser. The basic converter does not require an account and does not upload normal conversion artwork to a Vectraa image-storage service.</p><div className="privacyFacts"><span>No account required</span><span>No watermark</span><span>Local browser conversion</span></div></section>
     <section id="faq" className="contentSection"><span className="sectionKicker">FAQ</span><h2>Useful answers before you export.</h2><div className="faqList"><details><summary>Is the downloaded file a real vector?</summary><p>Yes. Vectraa exports SVG geometry made from vector paths rather than embedding your original raster image inside an SVG wrapper.</p></details><details><summary>Does my image leave my device?</summary><p>Core conversion is performed locally in your browser. Optional cloud workspace features may sync conversion metadata, but normal conversion artwork is not required to be uploaded.</p></details><details><summary>Can I use the SVG for printing?</summary><p>SVG is suitable for many print workflows. Always confirm final size, colors, fonts and machine requirements with your printer or production vendor.</p></details></div></section>
+    {landingPage && <section className="contentSection landingContent"><span className="sectionKicker">BUILT FOR THIS WORKFLOW</span><h2>{landingPage.heading}</h2><p className="sectionLead">{landingPage.intro}</p><div className="contentGrid">{landingPage.benefits.map((benefit, index) => <article key={benefit.title}><b>0{index + 1}</b><h3>{benefit.title}</h3><p>{benefit.body}</p></article>)}</div></section>}
+    <section className="contentSection converterDirectory"><span className="sectionKicker">EXPLORE CONVERTERS</span><h2>Start with the workflow that matches your artwork.</h2><nav>{LANDING_PAGES.map((page) => <a key={page.path} href={page.path}>{page.heading}</a>)}</nav></section>
+    <footer className="footer"><div><a className="brand" href="/">Vectraa<span>.</span></a><p>Private, browser-based image vectorization. No account and no watermark.</p></div><nav><a href="#privacy">Privacy</a><a href="#faq">FAQ</a><a href="/sitemap.xml">Sitemap</a><button className="shareButton" onClick={() => void shareSite()}>Share Vectraa</button></nav></footer>
   </main>;
 }

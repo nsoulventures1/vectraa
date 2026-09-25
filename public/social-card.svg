@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f7f8f5"/>
+  <circle cx="1050" cy="80" r="330" fill="#edf5ef"/>
+  <text x="90" y="170" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#18231e">Vectraa<tspan fill="#3d7c59">.</tspan></text>
+  <text x="90" y="330" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="800" letter-spacing="-5" fill="#18231e">Anything <tspan fill="#3d7c59">→</tspan> Vector.</text>
+  <text x="94" y="410" font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#65716a">Free, private JPG · PNG · WebP to SVG conversion</text>
+  <rect x="90" y="475" width="285" height="62" rx="31" fill="#1f5536"/>
+  <text x="232" y="516" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#ffffff">vectraa.com</text>
+</svg>
