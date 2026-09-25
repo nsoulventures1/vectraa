@@ -1,0 +1,99 @@
+.faqList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.faqList details {
+  background: #fff;
+  border: 1px solid #dce3dc;
+  border-radius: 12px;
+  padding: 15px;
+}
+
+.faqList summary {
+  color: #304037;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.faqList p {
+  color: #6f7b73;
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 10px 0 0;
+}
+
+.landingContent { padding-top: 54px; }
+
+.converterDirectory nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.converterDirectory a {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d5dfd6;
+  border-radius: 999px;
+  color: #244c32;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 42px;
+  padding: 0 15px;
+  text-decoration: none;
+}
+
+.converterDirectory a:hover,
+.converterDirectory a:focus-visible {
+  background: #edf6ef;
+  border-color: #31734b;
+}
+
+.footer > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.footer nav {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+}
+
+.footer nav a {
+  color: #435048;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.shareButton {
+  background: #fff;
+  border: 1px solid #316f49;
+  border-radius: 999px;
+  color: #245d3b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  padding: 9px 13px;
+}
+
+.shareButton:hover,
+.shareButton:focus-visible { background: #eaf4ec; }
+
+.hero h1 {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 1060px;
+}
+
+@media (max-width: 760px) {
+  .faqList { grid-template-columns: 1fr; }
+  .footer nav { align-items: flex-start; }
+}
