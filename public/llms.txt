@@ -1,0 +1,25 @@
+# Vectraa
+
+> Vectraa is a free, private, browser-based image-to-SVG vector converter. Core conversion runs on the visitor's device and does not require an account or add a watermark.
+
+## Converter pages
+
+- [Image to SVG](https://vectraa.com/image-to-svg): Convert JPG, PNG, and WebP artwork to genuine SVG paths.
+- [PNG to SVG](https://vectraa.com/png-to-svg): Convert transparent PNG logos, icons, and artwork.
+- [JPG to SVG](https://vectraa.com/jpg-to-svg): Convert JPEG artwork with cleanup for compression noise.
+- [WebP to SVG](https://vectraa.com/webp-to-svg): Convert WebP graphics to scalable SVG paths.
+- [Logo Vectorizer](https://vectraa.com/logo-vectorizer): Restore and vectorize logo artwork.
+- [Line Art Vectorizer](https://vectraa.com/line-art-vectorizer): Convert drawings, outlines, and signatures.
+
+## Product facts
+
+- Generates SVG geometry rather than wrapping a raster image inside SVG.
+- Supports JPG, PNG, and WebP inputs up to 20 MB.
+- Includes adaptive best-of-three tracing, Logo Rescue, before/after comparison, vector health checks, and purpose-aware export guidance.
+- Core conversion is processed locally in the browser.
+- No account and no watermark are required for basic conversion.
+
+## Canonical site
+
+- [Vectraa](https://vectraa.com/)
+- [Sitemap](https://vectraa.com/sitemap.xml)
