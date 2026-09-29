@@ -1,7 +1,7 @@
 import type { LandingPage } from './landing';
 
-const DEFAULT_TITLE = 'Free JPG & PNG to SVG Vector Converter | Vectraa';
-const DEFAULT_DESCRIPTION = 'Convert JPG, PNG and WebP images to clean, genuine SVG vectors free in your browser. Smart tracing, no account and no watermark.';
+const DEFAULT_TITLE = 'Vectraa — Free JPG, PNG & WebP to SVG Vector Converter';
+const DEFAULT_DESCRIPTION = 'Vectraa is a free online vector converter for turning JPG, PNG and WebP images into clean SVG paths. Smart tracing, no account and private browser processing.';
 
 function setMeta(selector: string, attribute: string, value: string) {
   document.querySelector<HTMLMetaElement>(selector)?.setAttribute(attribute, value);
