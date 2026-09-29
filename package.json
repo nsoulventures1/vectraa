@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "prebuild": "npm install --no-save --force @neplex/vectorizer-wasm32-wasi@0.1.0",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/prerender-landing-pages.mjs",
     "preview": "vite preview",
     "test": "vitest run src",
     "test:watch": "vitest src",

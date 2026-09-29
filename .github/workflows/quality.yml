@@ -36,12 +36,17 @@ jobs:
           test -f dist/_headers
           test -f dist/robots.txt
           test -f dist/site.webmanifest
+          test -f dist/png-to-svg/index.html
+          test -f dist/jpg-to-svg/index.html
+          test -f dist/webp-to-svg/index.html
           test -d dist/assets
           find dist/assets -type f | grep -q .
           grep -q 'Vectraa' dist/index.html
           grep -q 'Content-Security-Policy' dist/_headers
           grep -q 'User-agent:' dist/robots.txt
           grep -q '"name": "Vectraa' dist/site.webmanifest
+          grep -q '<title>JPG to SVG Converter' dist/jpg-to-svg/index.html
+          grep -q 'canonical" href="https://vectraa.com/webp-to-svg"' dist/webp-to-svg/index.html
           if find dist -type f -name '*.map' | grep -q .; then
             echo 'Unexpected source maps found in production bundle.' >&2
             exit 1
