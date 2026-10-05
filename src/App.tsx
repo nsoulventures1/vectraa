@@ -17,6 +17,7 @@ import { addConversionHistoryItem, clearConversionHistory, createHistoryItem, re
 import { WorkspacePanel } from './workspace/WorkspacePanel';
 import './marketing.css';
 import { trackGrowthEvent } from './marketing/analytics';
+import { currentGuidePage, GUIDE_PAGES, type GuidePage } from './marketing/guides';
 import { currentLandingPage, LANDING_PAGES } from './marketing/landing';
 import { applyPageMetadata } from './marketing/metadata';
 
@@ -32,6 +33,7 @@ export default function App() {
   const conversionRun = useRef(new RunGuard());
   const capabilities = useMemo(() => detectBrowserCapabilities(), []);
   const landingPage = useMemo(() => currentLandingPage(), []);
+  const guidePage = useMemo(() => currentGuidePage(), []);
   const supportError = browserSupportMessage(capabilities);
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
@@ -56,7 +58,7 @@ export default function App() {
   const purposeProfile = PURPOSES.find((item) => item.id === purpose) ?? PURPOSES[0];
   const purposeAssessment = useMemo(() => result ? assessPurpose(result.svg, purpose) : null, [result, purpose]);
 
-  useEffect(() => applyPageMetadata(landingPage), [landingPage]);
+  useEffect(() => applyPageMetadata(guidePage ?? landingPage), [guidePage, landingPage]);
 
   useEffect(() => {
     if (!capabilities.supported) return;
@@ -119,9 +121,11 @@ export default function App() {
     }
   }
 
+  if (guidePage) return <GuideView page={guidePage} />;
+
   return <main>
     <header className="nav"><a className="brand" href="/">Vectraa<span>.</span></a><nav className="navLinks"><a href="#workspace">Workspace</a><a href="#how-it-works">How it works</a><a href="#privacy">Privacy</a><a href="#faq">FAQ</a></nav><div className="privacy">Private by design · processed on your device</div></header>
-    <section className="hero"><p className="eyebrow">{landingPage?.eyebrow ?? 'FREE PRIVATE VECTOR STUDIO'}</p><h1>{landingPage ? landingPage.heading : <>Vectraa: Anything <span>→</span> Vector.</>}</h1><p className="lead">{landingPage?.lead ?? 'Turn JPG, PNG and WebP artwork into clean, scalable SVG — directly in your browser.'}</p><div className="modeRow"><button className="mode active" onClick={() => inputRef.current?.click()}>Upload an image</button><button className="mode" disabled>Describe what you want <b>Soon</b></button></div></section>
+    <section className="hero"><p className="eyebrow">{landingPage?.eyebrow ?? 'FREE PRIVATE VECTOR STUDIO'}</p><h1>{landingPage ? landingPage.heading : <>Anything <span>→</span> Vector.</>}</h1><p className="lead">{landingPage?.lead ?? 'Turn JPG, PNG and WebP artwork into clean, scalable SVG — directly in your browser.'}</p><div className="modeRow"><button className="mode active" onClick={() => inputRef.current?.click()}>Upload an image</button><button className="mode" disabled>Describe what you want <b>Soon</b></button></div></section>
     {supportError && <div role="alert" className="error">{supportError}</div>}
     <section className="studio"><input ref={inputRef} hidden disabled={!capabilities.supported} type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { void choose(e.target.files?.[0]); e.currentTarget.value = ''; }} /><div className="source card" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (capabilities.supported) void choose(e.dataTransfer.files[0]); }}><div className="cardHead"><span>ORIGINAL</span>{file && <button onClick={() => inputRef.current?.click()}>Replace</button>}</div>{sourceUrl ? <div className="canvas checker"><img style={{ transform: `scale(${zoom})` }} src={sourceUrl} alt="Uploaded original" /></div> : <button className="drop" disabled={!capabilities.supported} onClick={() => inputRef.current?.click()}><span className="uploadIcon">↑</span><strong>{capabilities.supported ? 'Drop your image here' : 'Browser upgrade required'}</strong><small>{capabilities.supported ? 'click to browse or paste from clipboard · JPG, PNG, WebP · up to 20 MB' : 'Use a current Chrome, Edge, Firefox or Safari browser to run local conversion.'}</small></button>}</div><div className="result card"><div className="cardHead"><span>VECTOR</span>{result && <span className="score">Quality {result.quality.score}/100</span>}</div>{svgUrl ? <div className="canvas checker"><img style={{ transform: `scale(${zoom})` }} src={svgUrl} alt="Vectorized result" /></div> : <div className="empty"><span>◇</span><strong>Your vector will appear here</strong><small>Real SVG paths — not a raster image wrapped in an SVG file.</small></div>}</div></section>
     {(sourceUrl || svgUrl) && <section className="inspectionBar"><span>Inspect</span><div className="zoomButtons">{[1, 2, 4].map((level) => <button key={level} className={zoom === level ? 'selected' : ''} onClick={() => setZoom(level)}>{level}×</button>)}</div>{result && <span className="hint">Use 4× to inspect edge smoothness and tracing detail.</span>}</section>}
@@ -139,7 +143,26 @@ export default function App() {
     <section id="privacy" className="contentSection privacySection"><span className="sectionKicker">PRIVACY</span><h2>Your artwork stays on your device for basic conversion.</h2><p className="sectionLead">Vectraa’s core JPG, PNG and WebP conversion is designed to run in your browser. The basic converter does not require an account and does not upload normal conversion artwork to a Vectraa image-storage service.</p><div className="privacyFacts"><span>No account required</span><span>No watermark</span><span>Local browser conversion</span></div></section>
     <section id="faq" className="contentSection"><span className="sectionKicker">FAQ</span><h2>Useful answers before you export.</h2><div className="faqList"><details><summary>Is the downloaded file a real vector?</summary><p>Yes. Vectraa exports SVG geometry made from vector paths rather than embedding your original raster image inside an SVG wrapper.</p></details><details><summary>Does my image leave my device?</summary><p>Core conversion is performed locally in your browser. Optional cloud workspace features may sync conversion metadata, but normal conversion artwork is not required to be uploaded.</p></details><details><summary>Can I use the SVG for printing?</summary><p>SVG is suitable for many print workflows. Always confirm final size, colors, fonts and machine requirements with your printer or production vendor.</p></details></div></section>
     {landingPage && <section className="contentSection landingContent"><span className="sectionKicker">BUILT FOR THIS WORKFLOW</span><h2>{landingPage.heading}</h2><p className="sectionLead">{landingPage.intro}</p><div className="contentGrid">{landingPage.benefits.map((benefit, index) => <article key={benefit.title}><b>0{index + 1}</b><h3>{benefit.title}</h3><p>{benefit.body}</p></article>)}</div></section>}
+    <GuideDirectory />
     <section className="contentSection converterDirectory"><span className="sectionKicker">EXPLORE CONVERTERS</span><h2>Start with the workflow that matches your artwork.</h2><nav>{LANDING_PAGES.map((page) => <a key={page.path} href={page.path}>{page.heading}</a>)}</nav></section>
     <footer className="footer"><div><a className="brand" href="/">Vectraa<span>.</span></a><p>Private, browser-based image vectorization. No account and no watermark.</p></div><nav><a href="#privacy">Privacy</a><a href="#faq">FAQ</a><a href="/sitemap.xml">Sitemap</a><button className="shareButton" onClick={() => void shareSite()}>Share Vectraa</button></nav></footer>
+  </main>;
+}
+
+function GuideDirectory() {
+  return <section className="contentSection guideDirectory"><span className="sectionKicker">VECTOR LEARNING CENTER</span><h2>Get a better result before you export.</h2><p className="sectionLead">Practical guidance for logo cleanup, printing, cutting machines and manageable SVG files.</p><div className="guideCards">{GUIDE_PAGES.map((guide) => <a key={guide.path} href={guide.path}><span>{guide.eyebrow}</span><strong>{guide.heading}</strong><small>{guide.readingTime}</small></a>)}</div></section>;
+}
+
+function GuideView({ page }: { page: GuidePage }) {
+  return <main>
+    <header className="nav"><a className="brand" href="/">Vectraa<span>.</span></a><nav className="navLinks"><a href="/">Converter</a><a href="#guide">Guide</a><a href="#related-guides">More guides</a></nav><div className="privacy">Free vector tools · private by design</div></header>
+    <article id="guide" className="guidePage">
+      <header className="guideHero"><p className="eyebrow">{page.eyebrow}</p><h1>{page.heading}</h1><p className="lead">{page.lead}</p><div className="guideMeta"><span>Updated {page.updated}</span><span>{page.readingTime}</span></div><a className="guideCta" href={page.relatedConverter.path}>{page.relatedConverter.label} <span aria-hidden="true">→</span></a></header>
+      <div className="guideBody">{page.sections.map((section) => <section key={section.heading}><h2>{section.heading}</h2>{section.paragraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}{section.tips && <ul>{section.tips.map((tip) => <li key={tip}>{tip}</li>)}</ul>}</section>)}</div>
+      <aside className="guideConversion"><span className="sectionKicker">TRY IT ON YOUR ARTWORK</span><h2>Turn the advice into a cleaner vector.</h2><p>Vectraa analyzes the source, compares trace candidates and lets you inspect the SVG before downloading.</p><a className="guideCta" href={page.relatedConverter.path}>{page.relatedConverter.label} <span aria-hidden="true">→</span></a></aside>
+    </article>
+    <div id="related-guides"><GuideDirectory /></div>
+    <section className="contentSection converterDirectory"><span className="sectionKicker">EXPLORE CONVERTERS</span><h2>Choose a converter for your source artwork.</h2><nav>{LANDING_PAGES.map((converter) => <a key={converter.path} href={converter.path}>{converter.heading}</a>)}</nav></section>
+    <footer className="footer"><div><a className="brand" href="/">Vectraa<span>.</span></a><p>Free, browser-based image vectorization. No account and no watermark.</p></div><nav><a href="/">Converter</a><a href="/sitemap.xml">Sitemap</a></nav></footer>
   </main>;
 }
