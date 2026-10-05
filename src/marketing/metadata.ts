@@ -1,13 +1,14 @@
 import type { LandingPage } from './landing';
+import type { GuidePage } from './guides';
 
-const DEFAULT_TITLE = 'Vectraa — Free JPG, PNG & WebP to SVG Vector Converter';
-const DEFAULT_DESCRIPTION = 'Vectraa is a free online vector converter for turning JPG, PNG and WebP images into clean SVG paths. Smart tracing, no account and private browser processing.';
+const DEFAULT_TITLE = 'Free JPG & PNG to SVG Vector Converter | Vectraa';
+const DEFAULT_DESCRIPTION = 'Convert JPG, PNG and WebP images to clean, genuine SVG vectors free in your browser. Smart tracing, no account and no watermark.';
 
 function setMeta(selector: string, attribute: string, value: string) {
   document.querySelector<HTMLMetaElement>(selector)?.setAttribute(attribute, value);
 }
 
-export function applyPageMetadata(page: LandingPage | null) {
+export function applyPageMetadata(page: LandingPage | GuidePage | null) {
   const title = page?.title ?? DEFAULT_TITLE;
   const description = page?.description ?? DEFAULT_DESCRIPTION;
   const canonicalUrl = new URL(page?.path ?? '/', 'https://vectraa.com').toString();
@@ -20,13 +21,21 @@ export function applyPageMetadata(page: LandingPage | null) {
   setMeta('meta[name="twitter:description"]', 'content', description);
   document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute('href', canonicalUrl);
 
+  const isGuide = Boolean(page && 'sections' in page);
   const schema = {
     '@context': 'https://schema.org',
-    '@type': page ? 'WebPage' : 'WebApplication',
+    '@type': isGuide ? 'Article' : page ? 'WebPage' : 'WebApplication',
     name: page?.heading ?? 'Vectraa Image to SVG Converter',
     description,
     url: canonicalUrl,
     isPartOf: { '@type': 'WebSite', name: 'Vectraa', url: 'https://vectraa.com/' },
+    ...(isGuide ? {
+      headline: page?.heading,
+      datePublished: '2026-10-05',
+      dateModified: '2026-10-05',
+      author: { '@type': 'Organization', name: 'Vectraa', url: 'https://vectraa.com/' },
+      publisher: { '@type': 'Organization', name: 'Vectraa', url: 'https://vectraa.com/' },
+    } : {}),
     ...(page ? {} : { applicationCategory: 'DesignApplication', operatingSystem: 'Web browser', offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' } }),
   };
   let script = document.querySelector<HTMLScriptElement>('#vectraa-page-schema');

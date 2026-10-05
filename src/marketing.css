@@ -55,6 +55,53 @@
   border-color: #31734b;
 }
 
+.guideCards {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.guideCards a {
+  background: #fff;
+  border: 1px solid #d9e2da;
+  border-radius: 16px;
+  color: #14271c;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 150px;
+  padding: 22px;
+  text-decoration: none;
+  transition: border-color .18s ease, transform .18s ease;
+}
+
+.guideCards a:hover,
+.guideCards a:focus-visible { border-color: #31734b; transform: translateY(-2px); }
+.guideCards span { color: #39724f; font-size: 10px; font-weight: 800; letter-spacing: .15em; }
+.guideCards strong { font-size: 20px; line-height: 1.25; }
+.guideCards small { color: #718078; font-size: 12px; margin-top: auto; }
+
+.guidePage { margin: 0 auto; max-width: 980px; padding: 76px 24px 26px; }
+.guideHero { border-bottom: 1px solid #dbe3dc; padding: 24px 0 56px; }
+.guideHero h1 { color: #102219; font-size: clamp(42px, 7vw, 76px); letter-spacing: -.055em; line-height: .98; margin: 18px 0 22px; max-width: 900px; }
+.guideHero .lead { color: #647169; font-size: clamp(17px, 2vw, 22px); line-height: 1.55; max-width: 760px; }
+.guideMeta { color: #6f7b73; display: flex; font-size: 12px; gap: 18px; margin: 22px 0; }
+.guideCta { align-items: center; background: #1f613b; border-radius: 999px; color: #fff; display: inline-flex; font-size: 13px; font-weight: 800; gap: 10px; min-height: 48px; padding: 0 20px; text-decoration: none; }
+.guideCta:hover, .guideCta:focus-visible { background: #174b2e; }
+
+.guideBody { margin: 0 auto; max-width: 760px; padding: 36px 0; }
+.guideBody section { border-bottom: 1px solid #e0e6e1; padding: 26px 0 30px; }
+.guideBody h2 { color: #1d3125; font-size: clamp(26px, 3vw, 36px); letter-spacing: -.035em; line-height: 1.15; margin: 0 0 16px; }
+.guideBody p, .guideBody li { color: #55635b; font-size: 16px; line-height: 1.75; }
+.guideBody p { margin: 0 0 14px; }
+.guideBody ul { background: #eef5ef; border-radius: 14px; margin: 18px 0 0; padding: 18px 22px 18px 42px; }
+.guideBody li + li { margin-top: 6px; }
+
+.guideConversion { background: #e9f3eb; border: 1px solid #ccded0; border-radius: 20px; margin: 20px 0 60px; padding: clamp(26px, 5vw, 48px); }
+.guideConversion h2 { color: #173122; font-size: clamp(28px, 4vw, 42px); letter-spacing: -.04em; margin: 12px 0; }
+.guideConversion p { color: #607067; line-height: 1.65; max-width: 650px; }
+
 .footer > div {
   display: flex;
   flex-direction: column;
@@ -95,5 +142,7 @@
 
 @media (max-width: 760px) {
   .faqList { grid-template-columns: 1fr; }
+  .guideCards { grid-template-columns: 1fr; }
+  .guidePage { padding-top: 40px; }
   .footer nav { align-items: flex-start; }
 }

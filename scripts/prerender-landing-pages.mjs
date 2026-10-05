@@ -2,10 +2,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
-const source = await readFile(resolve(root, 'src/marketing/landing.ts'), 'utf8');
+const sources = await Promise.all([
+  readFile(resolve(root, 'src/marketing/landing.ts'), 'utf8'),
+  readFile(resolve(root, 'src/marketing/guides.ts'), 'utf8'),
+]);
 const shell = await readFile(resolve(root, 'dist/index.html'), 'utf8');
 
-const pages = [...source.matchAll(/\{\s*path:\s*'([^']+)',\s*title:\s*'([^']+)',\s*description:\s*'([^']+)'/g)]
+const pages = [...sources.join('\n').matchAll(/\{\s*path:\s*'([^']+)',\s*title:\s*'([^']+)',\s*description:\s*'([^']+)'/g)]
   .map(([, path, title, description]) => ({ path, title, description }));
 
 if (pages.length === 0) throw new Error('No SEO landing pages found to prerender.');
@@ -33,10 +36,11 @@ for (const page of pages) {
   html = replaceMeta(html, /<meta name="twitter:title"[^>]*>/, page.title);
   html = replaceMeta(html, /<meta name="twitter:description"[^>]*>/, page.description);
   html = html.replace(/<link rel="canonical"[^>]*>/, `<link rel="canonical" href="${canonical}" />`);
+  if (page.path.startsWith('/guides/')) html = html.replace('<meta property="og:type" content="website" />', '<meta property="og:type" content="article" />');
 
   const output = resolve(root, 'dist', page.path.slice(1), 'index.html');
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, html);
 }
 
-console.log(`Prerendered ${pages.length} SEO landing pages.`);
+console.log(`Prerendered ${pages.length} SEO landing and guide pages.`);
