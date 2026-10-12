@@ -1,16 +1,16 @@
 import type { LandingPage } from './landing';
 import type { GuidePage } from './guides';
 
-const DEFAULT_TITLE = 'Free JPG & PNG to SVG Vector Converter | Vectraa';
-const DEFAULT_DESCRIPTION = 'Convert JPG, PNG and WebP images to clean, genuine SVG vectors free in your browser. Smart tracing, no account and no watermark.';
+export const DEFAULT_HOME_TITLE = 'Vectraa — Free JPG, PNG & WebP to SVG Vector Converter';
+export const DEFAULT_HOME_DESCRIPTION = 'Vectraa is a free online vector converter for turning JPG, PNG and WebP images into clean SVG paths. Smart tracing, no account and private browser processing.';
 
 function setMeta(selector: string, attribute: string, value: string) {
   document.querySelector<HTMLMetaElement>(selector)?.setAttribute(attribute, value);
 }
 
 export function applyPageMetadata(page: LandingPage | GuidePage | null) {
-  const title = page?.title ?? DEFAULT_TITLE;
-  const description = page?.description ?? DEFAULT_DESCRIPTION;
+  const title = page?.title ?? DEFAULT_HOME_TITLE;
+  const description = page?.description ?? DEFAULT_HOME_DESCRIPTION;
   const canonicalUrl = new URL(page?.path ?? '/', 'https://vectraa.com').toString();
   document.title = title;
   setMeta('meta[name="description"]', 'content', description);
