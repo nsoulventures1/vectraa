@@ -3,10 +3,6 @@ import { LANDING_PAGES, currentLandingPage } from './landing';
 import { GUIDE_PAGES, currentGuidePage } from './guides';
 
 describe('SEO landing pages', () => {
-  it('keeps the brand name in the homepage title', () => {
-    expect('Vectraa — Free JPG, PNG & WebP to SVG Vector Converter').toContain('Vectraa');
-  });
-
   it('defines unique paths, titles and descriptions', () => {
     expect(new Set(LANDING_PAGES.map((page) => page.path)).size).toBe(LANDING_PAGES.length);
     expect(new Set(LANDING_PAGES.map((page) => page.title)).size).toBe(LANDING_PAGES.length);
