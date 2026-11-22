@@ -22,7 +22,7 @@ import { currentLandingPage, LANDING_PAGES } from './marketing/landing';
 import { applyPageMetadata } from './marketing/metadata';
 
 const engine = new JsVectorEngine();
-const ENGINE_BUILD = '2026.09.09.4-market';
+const ENGINE_BUILD = '2026.11.22.1-shapes';
 const PRESETS: Array<{ id: VectorPreset; label: string }> = [
   { id: 'logo', label: 'Logo' }, { id: 'illustration', label: 'Illustration' }, { id: 'line-art', label: 'Line art' }, { id: 'signature', label: 'Signature' }, { id: 'high-detail', label: 'High detail' },
 ];
@@ -37,6 +37,9 @@ export default function App() {
   const supportError = browserSupportMessage(capabilities);
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState<VectorPreset>('logo');
+  const [detail, setDetail] = useState(DEFAULT_OPTIONS.logo.detail);
+  const [smoothing, setSmoothing] = useState(DEFAULT_OPTIONS.logo.smoothing);
+  const [colors, setColors] = useState(DEFAULT_OPTIONS.logo.colors);
   const [purpose, setPurpose] = useState<ProductionPurpose>('general');
   const [recommendation, setRecommendation] = useState<VectorRecommendation | null>(null);
   const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
@@ -81,7 +84,8 @@ export default function App() {
       const nextAnalysis = await analyzeImage(next);
       if (!analysisRun.current.isCurrent(run)) return;
       const nextRecommendation = recommendVectorWorkflow(nextAnalysis);
-      setAnalysis(nextAnalysis); setRecommendation(nextRecommendation); setPreset(nextRecommendation.preset); setPurpose(nextRecommendation.purpose); setLogoRescue(nextRecommendation.logoRescue);
+      const defaults = DEFAULT_OPTIONS[nextRecommendation.preset];
+      setAnalysis(nextAnalysis); setRecommendation(nextRecommendation); setPreset(nextRecommendation.preset); setDetail(defaults.detail); setSmoothing(defaults.smoothing); setColors(defaults.colors); setPurpose(nextRecommendation.purpose); setLogoRescue(nextRecommendation.logoRescue);
       trackGrowthEvent('analysis_completed', { preset: nextRecommendation.preset, confidence: nextAnalysis.confidence, logo_rescue: nextRecommendation.logoRescue });
     } catch (err) { if (analysisRun.current.isCurrent(run)) { setError(err instanceof Error ? err.message : 'Image analysis failed. Try another image or refresh the page.'); trackGrowthEvent('conversion_failed', { phase: 'analysis' }); } }
     finally { if (analysisRun.current.isCurrent(run)) setAnalyzing(false); }
@@ -96,7 +100,8 @@ export default function App() {
     try {
       const processingFile = logoRescue && analysis ? await preprocessLogoForRescue(sourceFile, recommendedLogoRescueOptions(analysis)) : sourceFile;
       if (!conversionRun.current.isCurrent(run)) return;
-      const base = logoRescue ? { ...DEFAULT_OPTIONS.logo, transparentBackground: true } : DEFAULT_OPTIONS[preset];
+      const activePreset = logoRescue ? 'logo' : preset;
+      const base = { ...DEFAULT_OPTIONS[activePreset], preset: activePreset, detail, smoothing, colors, transparentBackground: logoRescue ? true : DEFAULT_OPTIONS[activePreset].transparentBackground };
       const multi = await vectorizeBestOf(engine, processingFile, base, 3);
       if (!conversionRun.current.isCurrent(run)) return;
       setResult(multi.best.result); setFidelity(multi.best.fidelity); setSelectedPass(multi.best.id); setPassCount(multi.candidates.length);
@@ -132,7 +137,7 @@ export default function App() {
     {result && sourceUrl && svgUrl && <section className="comparison card"><div className="cardHead"><span>BEFORE / VECTOR COMPARISON</span><span className="score">{compare}% vector reveal</span></div><div className="compareCanvas checker"><img src={sourceUrl} alt="Original comparison" /><div className="vectorReveal" style={{ width: `${compare}%` }}><img src={svgUrl} alt="Vector comparison" /></div><div className="compareLine" style={{ left: `${compare}%` }} /></div><label className="compareControl"><span>Original</span><input aria-label="Compare original and vector" type="range" min="0" max="100" value={compare} onChange={(e) => setCompare(Number(e.target.value))} /><span>Vector</span></label></section>}
     {file && <section className="analysisBar" aria-live="polite" data-analysis={analysis ? JSON.stringify(analysis.signals) : undefined}>{analyzing ? <span className="analysisLoading">Inspecting artwork locally…</span> : analysis && <><span className="analysisBadge">Recommended: <b>{PRESETS.find((item) => item.id === analysis.likelyKind)?.label}</b> · {analysis.confidence}% confidence</span><span>{analysis.width}×{analysis.height} · {analysis.megapixels.toFixed(1)} MP{analysis.hasAlpha ? ' · transparency detected' : ''}</span>{analysis.warnings[0] && <span className="analysisWarning">{analysis.warnings[0]}</span>}</>}</section>}
     {recommendation && <section className="analysisBar"><span className="analysisBadge"><b>Smart setup applied:</b> {PRESETS.find((item) => item.id === recommendation.preset)?.label} tracing · {purposeLabel(recommendation.purpose)}{recommendation.logoRescue ? ' · Logo Rescue' : ''}</span>{recommendation.reasons.map((reason) => <span key={reason}>{reason}</span>)}</section>}
-    <section className="controls"><div><label>Optimize tracing for {analysis ? '· smart setup applied, fully adjustable' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id && !logoRescue ? 'selected' : ''} onClick={() => { setPreset(item.id); setLogoRescue(false); }}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}{analysis?.likelyKind === 'logo' && <button className={logoRescue ? 'selected' : ''} onClick={() => setLogoRescue((value) => !value)}>Logo Rescue · clean poor JPG</button>}</div></div><div className="actions"><button className="primary" disabled={!file || running || analyzing || !capabilities.supported} onClick={vectorize}>{running ? 'Finding best vector…' : analyzing ? 'Analyzing…' : logoRescue ? 'Rescue & Vectorize' : 'Make Best Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div></section>
+    <section className="controls"><div><label>Optimize tracing for {analysis ? '· smart setup applied, adjust anytime' : ''}</label><div className="pills">{PRESETS.map((item) => <button key={item.id} className={preset === item.id && !logoRescue ? 'selected' : ''} onClick={() => { const next = DEFAULT_OPTIONS[item.id]; setPreset(item.id); setLogoRescue(false); setDetail(next.detail); setSmoothing(next.smoothing); setColors(next.colors); }}>{item.label}{analysis?.likelyKind === item.id ? ' · Recommended' : ''}</button>)}{analysis?.likelyKind === 'logo' && <button className={logoRescue ? 'selected' : ''} onClick={() => setLogoRescue((value) => !value)}>Logo Rescue · clean poor JPG</button>}</div><div className="tuning"><label>Colours <b>{colors}</b><input aria-label="Colour count" type="range" min={2} max={32} value={colors} onChange={(event) => setColors(Number(event.target.value))} /></label><div className="swatches" aria-label={result ? 'Colours in this SVG' : 'Detected colours'}>{(result ? svgPalette(result.svg) : (analysis?.palette ?? []).slice(0, colors)).map((swatch) => <i key={swatch} style={{ background: swatch }} title={swatch} />)}</div><label>Detail <b>{detail}</b><input aria-label="Detail" type="range" min={0} max={100} value={detail} onChange={(event) => setDetail(Number(event.target.value))} /></label><label>Smoothing <b>{smoothing}</b><input aria-label="Smoothing" type="range" min={0} max={100} value={smoothing} onChange={(event) => setSmoothing(Number(event.target.value))} /></label></div></div><div className="actions"><button className="primary" disabled={!file || running || analyzing || !capabilities.supported} onClick={vectorize}>{running ? 'Finding best vector…' : analyzing ? 'Analyzing…' : logoRescue ? 'Rescue & Vectorize' : 'Make Best Vector'}</button><button className="secondary" disabled={!result} onClick={download}>Download SVG</button></div></section>
     {logoRescue && <div className="analysisBar"><span className="analysisBadge"><b>Logo Rescue on</b> · local denoise, contrast cleanup, color simplification and near-white background removal before tracing</span></div>}
     {error && <div role="alert" className="error">{error}</div>}
     {result && benchmark && <section className="metrics">{fidelity && <span><b>{fidelity.score}/100</b> visual fidelity</span>}<span><b>{benchmark.overallScore}/100</b> vector health</span>{selectedPass && <span><b>{selectedPass}</b> winning pass · best of {passCount}</span>}<span><b>{result.quality.paths}</b> paths</span><span><b>{result.quality.nodesApprox}</b> approx. nodes</span><span><b>{Math.round(result.quality.bytes / 1024)}</b> KB SVG</span><span><b>{ENGINE_BUILD}</b> engine build</span></section>}
@@ -147,6 +152,20 @@ export default function App() {
     <section className="contentSection converterDirectory"><span className="sectionKicker">EXPLORE CONVERTERS</span><h2>Start with the workflow that matches your artwork.</h2><nav>{LANDING_PAGES.map((page) => <a key={page.path} href={page.path}>{page.heading}</a>)}</nav></section>
     <footer className="footer"><div><a className="brand" href="/">Vectraa<span>.</span></a><p>Private, browser-based image vectorization. No account and no watermark.</p></div><nav><a href="#privacy">Privacy</a><a href="#faq">FAQ</a><a href="/sitemap.xml">Sitemap</a><button className="shareButton" onClick={() => void shareSite()}>Share Vectraa</button></nav></footer>
   </main>;
+}
+
+function svgPalette(svg: string): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const match of svg.matchAll(/(?:fill|stroke)="(rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|#[0-9a-fA-F]{3,8})"/g)) {
+    const value = match[1].replace(/\s+/g, '');
+    if (value === 'none' || /rgb\(255,255,255\)/i.test(value) || /^#f{3}(?:f{3})?$/i.test(value)) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    found.push(value);
+    if (found.length === 12) break;
+  }
+  return found;
 }
 
 function GuideDirectory() {
