@@ -4,6 +4,9 @@
   "compatibility_date": "2026-08-15",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    // Unknown URLs serve dist/404.html with HTTP 404 instead of the homepage.
+    "not_found_handling": "404-page",
+    // /png-to-svg and /png-to-svg/ both resolve to the slash-free canonical URL.
+    "html_handling": "drop-trailing-slash"
   }
 }

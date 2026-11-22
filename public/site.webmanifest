@@ -1,11 +1,16 @@
 {
-  "name": "Vectraa — AI Vector Studio",
+  "name": "Vectraa — Private Image to SVG",
   "short_name": "Vectraa",
-  "description": "Private browser-based JPG, PNG and WebP to genuine SVG vector conversion.",
+  "description": "Free, private, in-browser JPG, PNG and WebP to genuine SVG conversion. Images are not uploaded.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f7f8f5",
   "theme_color": "#f7f8f5",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ],
   "categories": ["design", "graphics", "productivity"]
 }
