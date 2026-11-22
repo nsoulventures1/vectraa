@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -26,4 +27,7 @@ export default defineConfig({
   server: { headers: isolationHeaders },
   preview: { headers: isolationHeaders },
   worker: { format: 'es' },
+  test: {
+    setupFiles: ['./src/vector/imageDataSetup.ts'],
+  },
 });

@@ -22,7 +22,10 @@ export interface ImageAnalysis {
     alphaCoverage: number;
     midtoneCoverage: number;
     paletteConcentration: number;
+    significantColors?: number;
+    majorColors?: number;
   };
+  palette?: string[];
   warnings: string[];
 }
 

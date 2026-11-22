@@ -1,4 +1,7 @@
 import ImageTracer from 'imagetracerjs';
+import { rgbCss } from './color';
+import { learnSeparatedPalette } from './palette';
+import { extractComponents, fitPrimitive, renderPrimitive } from './primitives';
 import type { VectorQuality, VectorizeOptions } from './types';
 import { inspectSvg } from './quality';
 
@@ -28,8 +31,8 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
   const foreground = buildForegroundMask(source, background);
   cleanSpeckles(foreground, source.width, source.height);
 
-  const interior = erodeMask(foreground, source.width, source.height, 1);
-  const palette = extractPaletteLab(source, interior, foreground, background, Math.max(2, Math.min(8, options.colors || 6)));
+  const learned = learnSeparatedPalette(source, Math.max(2, Math.min(24, options.colors || 8)), background);
+  const palette: PaletteColor[] = learned.map((rgb) => ({ rgb, lab: rgbToLab(rgb), count: 1 }));
   if (!palette.length) palette.push({ rgb: { r: 20, g: 42, b: 82 }, lab: rgbToLab({ r: 20, g: 42, b: 82 }), count: 1 });
 
   const labels = assignPixelsToPalette(source, foreground, palette, background);
@@ -41,7 +44,17 @@ export async function vectorizeLogoHighFidelity(source: ImageData, options: Vect
     const mask = layerMasks[index];
     if (!hasForeground(mask)) continue;
 
-    const split = splitMacroAndMicro(mask, source.width, source.height);
+    const color = rgbCss(palette[index].rgb);
+    const { components } = extractComponents(mask, source.width, source.height);
+    const residual = new Uint8Array(mask.length);
+    for (const component of components) {
+      const primitive = fitPrimitive(mask, source.width, source.height, component);
+      if (primitive) paths.push(renderPrimitive(primitive, color));
+      else for (const pixel of component.pixels) residual[pixel] = 1;
+    }
+    if (!hasForeground(residual)) continue;
+
+    const split = splitMacroAndMicro(residual, source.width, source.height);
     if (hasForeground(split.macro)) {
       paths.push(...traceBinaryLayer(split.macro, source.width, source.height, palette[index].rgb, options, false));
     }

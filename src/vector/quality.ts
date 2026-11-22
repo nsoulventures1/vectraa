@@ -5,7 +5,7 @@ const SCRIPT_OR_EVENT = /<script\b|\son[a-z]+\s*=|javascript:/i;
 export function inspectSvg(svg: string): VectorQuality {
   const warnings: string[] = [];
   const validSvg = /^\s*<svg\b[\s\S]*<\/svg>\s*$/i.test(svg) && !SCRIPT_OR_EVENT.test(svg);
-  const paths = (svg.match(/<path\b/gi) ?? []).length;
+  const paths = (svg.match(/<(?:path|circle|ellipse|rect|line|polygon|polyline)\b/gi) ?? []).length;
   const commands = svg.match(/[MLHVCSQTAZmlhvcsqtaz]/g) ?? [];
   const nodesApprox = commands.length;
   const bytes = new TextEncoder().encode(svg).byteLength;

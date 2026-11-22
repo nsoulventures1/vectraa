@@ -178,7 +178,7 @@ function profileFor(preset: VectorPreset) {
     case 'line-art':
       return { cleanerDetail: -8, cleanerSmoothing: 8, cleanerColors: 0, faithfulDetail: 12, faithfulSmoothing: -10, faithfulColors: 0 };
     case 'logo':
-      return { cleanerDetail: -10, cleanerSmoothing: 8, cleanerColors: -2, faithfulDetail: 12, faithfulSmoothing: -8, faithfulColors: 4 };
+      return { cleanerDetail: -8, cleanerSmoothing: 10, cleanerColors: 0, faithfulDetail: 8, faithfulSmoothing: -6, faithfulColors: 0 };
     case 'illustration':
       return { cleanerDetail: -8, cleanerSmoothing: 6, cleanerColors: -6, faithfulDetail: 10, faithfulSmoothing: -6, faithfulColors: 8 };
     case 'high-detail':

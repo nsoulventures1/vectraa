@@ -1,4 +1,7 @@
 import ImageTracer from 'imagetracerjs';
+import { traceBinaryArtwork } from './binaryTrace';
+import { estimateCornerBackground } from './color';
+import { learnSeparatedPalette, snapToPalette } from './palette';
 import { assertSafeSvg, inspectSvg } from './quality';
 import { vectorizeLogoHighFidelity } from './LogoVectorPipeline';
 import { tryVectorizeBandedBadge } from './BandedBadgePipeline';
@@ -18,9 +21,13 @@ export class JsVectorEngine implements VectorEngine {
 
   async vectorize(file: File, rawOptions: VectorizeOptions): Promise<VectorResult> {
     await validateRasterFileSignature(file);
+    const decoded = await decodeRaster(file);
+    return this.vectorizeImageData(decoded, rawOptions);
+  }
+
+  async vectorizeImageData(decoded: ImageData, rawOptions: VectorizeOptions): Promise<VectorResult> {
     const options = clampOptions(rawOptions);
     const started = performance.now();
-    const decoded = await decodeRaster(file);
 
     // Structural routing happens BEFORE the UI preset branch. The automatic classifier
     // often labels detailed seals/roundels as "high-detail" rather than "logo". Keeping
@@ -49,6 +56,33 @@ export class JsVectorEngine implements VectorEngine {
           ])],
         },
       };
+    }
+
+    if (options.preset === 'signature' || options.preset === 'line-art') {
+      const traced = traceBinaryArtwork(decoded, options);
+      const svg = assertSafeSvg(sanitizeGeneratedSvg(traced));
+      return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
+    }
+
+    if (options.preset === 'illustration') {
+      try {
+        const prepared = separateIllustrationColours(decoded, options);
+        const result = await withSvgBitmapFallback(() => vectorizeLogoHighFidelity(prepared, options));
+        const svg = assertSafeSvg(sanitizeGeneratedSvg(result.svg));
+        const structural = inspectSvg(svg);
+        return {
+          svg,
+          elapsedMs: Math.round(performance.now() - started),
+          quality: {
+            ...structural,
+            score: Math.min(structural.score, result.quality.score),
+            warnings: [...new Set([...structural.warnings, ...result.quality.warnings])],
+          },
+        };
+      } catch {
+        const svg = assertSafeSvg(sanitizeGeneratedSvg(traceGeneric(decoded, options)));
+        return { svg, elapsedMs: Math.round(performance.now() - started), quality: inspectSvg(svg) };
+      }
     }
 
     if (options.preset === 'logo') {
@@ -139,12 +173,19 @@ export class JsVectorEngine implements VectorEngine {
 function logoPrecisionOptions(options: VectorizeOptions): VectorizeOptions {
   return {
     ...options,
-    // Keep the multi-pass variants meaningfully distinct. The previous 92/8/16
-    // clamp collapsed balanced, cleaner and faithful into the same expensive trace.
-    colors: Math.max(options.colors, 6),
-    detail: Math.max(options.detail, 84),
-    smoothing: Math.min(options.smoothing, 18),
+    // Honour the colour, detail and smoothing controls. Distinct preset passes
+    // still differ; they are no longer collapsed onto one hidden setting.
+    colors: Math.max(2, Math.min(24, options.colors)),
+    detail: options.detail,
+    smoothing: options.smoothing,
   };
+}
+
+function separateIllustrationColours(source: ImageData, options: VectorizeOptions): ImageData {
+  const background = estimateCornerBackground(source);
+  const palette = learnSeparatedPalette(source, options.colors, background);
+  if (palette.length < 2) return source;
+  return snapToPalette(source, palette, 16);
 }
 
 function traceGeneric(imageData: ImageData, options: VectorizeOptions): string {

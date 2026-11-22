@@ -48,6 +48,36 @@ describe('classifyImageSignals', () => {
     expect(classifyImageSignals({ ...base, lightBackground: 0.58, darkInk: 0.12, edgeDensity: 0.19, colorComplexity: 0.78, saturation: 0.02, midtoneCoverage: 0.24, paletteConcentration: 0.28 })).toBe('high-detail');
   });
 
+  it('keeps a smooth grey product on white out of the flat-logo route', () => {
+    expect(classifyImageSignals({
+      ...base,
+      lightBackground: 0.71,
+      darkInk: 0.12,
+      edgeDensity: 0.02,
+      colorComplexity: 0.25,
+      saturation: 0.02,
+      midtoneCoverage: 0.01,
+      paletteConcentration: 0.98,
+      significantColors: 3,
+      majorColors: 1,
+    })).toBe('high-detail');
+  });
+
+  it('keeps a two-ink mark on a noisy light canvas as a logo', () => {
+    expect(classifyImageSignals({
+      ...base,
+      lightBackground: 0.91,
+      darkInk: 0.08,
+      edgeDensity: 0.049,
+      colorComplexity: 0.52,
+      saturation: 0.08,
+      midtoneCoverage: 0.015,
+      paletteConcentration: 0.64,
+      significantColors: 5,
+      majorColors: 2,
+    })).toBe('logo');
+  });
+
   it('recognizes a compressed flat-colour emblem on a dark canvas as a logo', () => {
     expect(classifyImageSignals({ ...base, lightBackground: 0.01, darkInk: 0.62, edgeDensity: 0.24, colorComplexity: 0.91, saturation: 0.72, midtoneCoverage: 0.01, paletteConcentration: 0.86 })).toBe('logo');
   });

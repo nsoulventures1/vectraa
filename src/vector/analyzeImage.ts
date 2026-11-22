@@ -1,3 +1,4 @@
+import { paletteCss, learnSeparatedPalette } from './palette';
 import { decodeRaster } from './rasterDecode';
 import type { ImageAnalysis, VectorPreset } from './types';
 import { validateRasterFile } from './validateInput';
@@ -8,6 +9,12 @@ export interface ImageSignals {
   width: number; height: number; hasAlpha: boolean; alphaCoverage: number;
   edgeDensity: number; colorComplexity: number; lightBackground: number;
   darkInk: number; saturation: number; midtoneCoverage: number; paletteConcentration: number;
+  /** Coarse colours that each cover at least 4% of the foreground. Antialias dust is ignored. */
+  significantColors?: number;
+  /** Colours that each cover at least 8% of the foreground. */
+  majorColors?: number;
+  /** Share of detected edges that belong to a run of eight or more aligned steps. */
+  straightness?: number;
 }
 
 export async function analyzeImage(file: File): Promise<ImageAnalysis> {
@@ -29,20 +36,39 @@ export async function analyzeImage(file: File): Promise<ImageAnalysis> {
   if(megapixels>12)warnings.push('Large source image; conversion may take longer.');
   if(signals.colorComplexity>0.8&&likelyKind!=='logo')warnings.push('Many foreground color transitions detected; expect a larger SVG.');
   if(signals.edgeDensity>0.42&&likelyKind!=='logo')warnings.push('Very dense detail detected; some simplification may improve editability.');
-  return {width:originalWidth,height:originalHeight,megapixels,hasAlpha:signals.hasAlpha,likelyKind,confidence:recommendationConfidence(signals,likelyKind),signals:{edgeDensity:signals.edgeDensity,colorComplexity:signals.colorComplexity,lightBackground:signals.lightBackground,alphaCoverage:signals.alphaCoverage,midtoneCoverage:signals.midtoneCoverage,paletteConcentration:signals.paletteConcentration},warnings};
+  const palette=paletteCss(learnSeparatedPalette(decoded, 8)).slice(0, 8);
+  return {width:originalWidth,height:originalHeight,megapixels,hasAlpha:signals.hasAlpha,likelyKind,confidence:recommendationConfidence(signals,likelyKind),palette,signals:{edgeDensity:signals.edgeDensity,colorComplexity:signals.colorComplexity,lightBackground:signals.lightBackground,alphaCoverage:signals.alphaCoverage,midtoneCoverage:signals.midtoneCoverage,paletteConcentration:signals.paletteConcentration,significantColors:signals.significantColors,majorColors:signals.majorColors},warnings};
 }
 
 export function classifyImageSignals(signals:ImageSignals):VectorPreset {
   const {edgeDensity,colorComplexity,lightBackground,darkInk,saturation,alphaCoverage,midtoneCoverage,paletteConcentration}=signals;
-  const signatureLike=lightBackground>0.72&&darkInk>0.01&&darkInk<0.28&&colorComplexity<0.2&&edgeDensity<0.2&&saturation<0.18;
+  const signatureLike=lightBackground>0.72&&darkInk>0.01&&darkInk<0.28&&colorComplexity<0.2&&edgeDensity<0.2&&saturation<0.18&&(signals.significantColors===undefined||signals.significantColors>=4);
   if(signatureLike)return 'signature';
   const lineArtLike=colorComplexity<0.24&&edgeDensity>=0.15&&(lightBackground>0.52||alphaCoverage>0.08)&&saturation<0.22;
   if(lineArtLike)return 'line-art';
+  // Flat artwork often fails the strict gates above because antialiasing inflates
+  // raw colour complexity. A handful of real inks is still a signature, a line
+  // drawing, or a logo — not a photograph.
+  if(typeof signals.significantColors==='number'){
+    const colors=signals.significantColors;
+    const flatLogo=colors>=2&&colors<=5&&paletteConcentration>0.7&&midtoneCoverage<0.16&&edgeDensity<0.38&&saturation>0.03;
+    if(flatLogo)return 'logo';
+    // Sparse grey ink on a clean light page. Antialiasing creates several grey
+    // bins, which used to look like a smooth product photo.
+    const greyInk=saturation<0.02&&lightBackground>0.7&&paletteConcentration>0.9&&darkInk>0.004&&darkInk<0.22&&edgeDensity<0.16;
+    if(greyInk&&colors>=4)return 'signature';
+    if(greyInk&&colors<=2)return 'line-art';
+  }
 
+  // A reflective product can be mostly one grey in the coarse foreground bins, so
+  // palette concentration alone must not send it through the flat-logo tracer.
+  // A real logo on the same kind of light canvas still has at least two substantial inks.
+  const smoothCanvas=edgeDensity<0.06&&midtoneCoverage>0.006&&colorComplexity>0.18&&colorComplexity<0.55;
+  const multiInkMark=(signals.majorColors??0)>=2&&saturation>0.03;
   const productPhotoLike=lightBackground>0.38&&(
-    midtoneCoverage>0.12
-    || (midtoneCoverage>0.025&&saturation<0.03)
-    || (edgeDensity<0.06&&midtoneCoverage>0.006&&colorComplexity>0.18&&colorComplexity<0.55)
+    (paletteConcentration<0.8&&midtoneCoverage>0.12)
+    || (paletteConcentration<0.8&&midtoneCoverage>0.025&&saturation<0.03)
+    || (smoothCanvas&&!multiInkMark)
   );
   if(productPhotoLike)return 'high-detail';
 
@@ -69,31 +95,46 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
     && darkInk<0.30
     && edgeDensity<0.32
     && midtoneCoverage<0.075
-    && (saturation>0.025||alphaCoverage>0.02);
+    && (saturation>0.025||alphaCoverage>0.02)
+    && (signals.significantColors===undefined||signals.significantColors<=5);
   if(noisyLightCanvasLogo)return 'logo';
 
   // Complexity is a stronger signal than a light canvas. This guard prevents
   // photographs/dense artwork from being swallowed by the broad brand-art route.
-  if(colorComplexity>0.72||edgeDensity>0.42)return 'high-detail';
+  // Downscaling a crisp logo for analysis smears antialiased edges across many
+  // RGB bins. Concentration and a short real palette still mean flat artwork.
+  const flatDespiteBlur=(signals.majorColors??0)>=2&&(signals.majorColors??0)<=4&&paletteConcentration>0.6&&lightBackground>0.45&&edgeDensity<0.25&&midtoneCoverage<0.12&&saturation>0.02;
+  if(flatDespiteBlur)return 'logo';
+  if((colorComplexity>0.72||edgeDensity>0.42)&&paletteConcentration<0.62)return 'high-detail';
 
-  const scannedBrandArt=midtoneCoverage<0.10&&lightBackground>0.38&&darkInk>0.008&&darkInk<0.48&&edgeDensity<0.5&&colorComplexity<0.5&&(saturation>0.035||alphaCoverage>0.025);
-  const lightBackgroundBrandArt=midtoneCoverage<0.10&&lightBackground>0.48&&edgeDensity<0.42&&darkInk<0.42&&colorComplexity<0.5&&(saturation>0.045||colorComplexity<0.4);
-  const logoLike=scannedBrandArt||lightBackgroundBrandArt||(midtoneCoverage<0.10&&colorComplexity<0.46&&edgeDensity<0.34&&(saturation>0.07||alphaCoverage>0.04||lightBackground>0.35));
+  const fewInks=signals.significantColors===undefined||signals.significantColors<=5;
+  const scannedBrandArt=fewInks&&midtoneCoverage<0.10&&lightBackground>0.38&&darkInk>0.008&&darkInk<0.48&&edgeDensity<0.5&&colorComplexity<0.5&&(saturation>0.035||alphaCoverage>0.025);
+  const lightBackgroundBrandArt=fewInks&&midtoneCoverage<0.10&&lightBackground>0.48&&edgeDensity<0.42&&darkInk<0.42&&colorComplexity<0.5&&(saturation>0.045||colorComplexity<0.4);
+  const logoLike=scannedBrandArt||lightBackgroundBrandArt||(fewInks&&midtoneCoverage<0.10&&colorComplexity<0.46&&edgeDensity<0.34&&(saturation>0.07||alphaCoverage>0.04||lightBackground>0.35));
   if(logoLike)return 'logo';
-  if(colorComplexity>0.72||edgeDensity>0.38)return 'high-detail';
+  if((colorComplexity>0.72||edgeDensity>0.38)&&paletteConcentration<0.62)return 'high-detail';
   return 'illustration';
 }
 
 export function recommendationConfidence(signals:ImageSignals,preset:VectorPreset):number {
-  const margin=preset==='signature'?(signals.lightBackground-0.72)+(0.2-signals.edgeDensity)+(0.2-signals.colorComplexity):preset==='line-art'?(signals.edgeDensity-0.15)+(0.24-signals.colorComplexity):preset==='logo'?Math.max((signals.lightBackground-0.38)+(0.5-signals.edgeDensity)+signals.saturation,(0.46-signals.colorComplexity)+(0.34-signals.edgeDensity)):preset==='high-detail'?Math.max(signals.colorComplexity-0.72,signals.edgeDensity-0.38)*2:0.22;
+  let margin=preset==='signature'?(signals.lightBackground-0.72)+(0.2-signals.edgeDensity)+(0.2-signals.colorComplexity):preset==='line-art'?(signals.edgeDensity-0.15)+(0.24-signals.colorComplexity):preset==='logo'?Math.max((signals.lightBackground-0.38)+(0.5-signals.edgeDensity)+signals.saturation,(0.46-signals.colorComplexity)+(0.34-signals.edgeDensity)):preset==='high-detail'?Math.max(signals.colorComplexity-0.72,signals.edgeDensity-0.38)*2:0.22;
+  if(typeof signals.significantColors==='number'){
+    if(preset==='signature'&&signals.significantColors<=2&&signals.saturation<0.14&&signals.lightBackground>0.6)margin=Math.max(margin,0.38);
+    if(preset==='line-art'&&signals.significantColors<=3&&signals.saturation<0.12&&signals.lightBackground>0.55)margin=Math.max(margin,0.36);
+    if(preset==='logo'&&signals.significantColors<=6&&signals.paletteConcentration>0.7)margin=Math.max(margin,0.42);
+    if(preset==='high-detail'&&signals.significantColors<=6&&signals.paletteConcentration>0.7)margin=Math.min(margin,-0.15);
+  }
   return Math.max(55,Math.min(96,Math.round(68+margin*45)));
 }
 
-function measureSignals(pixels:Uint8ClampedArray,sampleWidth:number,sampleHeight:number,width:number,height:number):ImageSignals {
+export function measureSignals(pixels:Uint8ClampedArray,sampleWidth:number,sampleHeight:number,width:number,height:number):ImageSignals {
   const foregroundBins=new Map<number,number>(),gray=new Uint8Array(sampleWidth*sampleHeight);let transparent=0,visible=0,light=0,dark=0,saturated=0,midtones=0,foreground=0;
-  for(let i=0,p=0;i<pixels.length;i+=4,p++) {const r=pixels[i],g=pixels[i+1],b=pixels[i+2],a=pixels[i+3],lum=Math.round(.2126*r+.7152*g+.0722*b);gray[p]=lum;if(a<240)transparent++;if(a<24)continue;visible++;if(lum>235)light++;if(lum<80)dark++;const max=Math.max(r,g,b),min=Math.min(r,g,b),chroma=max-min;if(chroma>55)saturated++;if(lum>=72&&lum<=225&&chroma<18)midtones++;if(lum<232||chroma>28){foreground++;const bin=((r>>5)<<6)|((g>>5)<<3)|(b>>5);foregroundBins.set(bin,(foregroundBins.get(bin)??0)+1);}}
-  let edgeCount=0,comparisons=0;for(let y=1;y<sampleHeight;y++)for(let x=1;x<sampleWidth;x++){const index=y*sampleWidth+x,current=gray[index];if(Math.abs(current-gray[index-1])>34)edgeCount++;if(Math.abs(current-gray[index-sampleWidth])>34)edgeCount++;comparisons+=2;}
-  const total=sampleWidth*sampleHeight,visibleSafe=Math.max(1,visible),foregroundSafe=Math.max(1,foreground),paletteDensity=foregroundBins.size/Math.max(12,Math.min(64,Math.sqrt(foregroundSafe)*1.8));
+  for(let i=0,p=0;i<pixels.length;i+=4,p++) {const r=pixels[i],g=pixels[i+1],b=pixels[i+2],a=pixels[i+3],lum=Math.round(.2126*r+.7152*g+.0722*b);gray[p]=lum;if(a<240)transparent++;if(a<24)continue;visible++;if(lum>226)light++;if(lum<80)dark++;const max=Math.max(r,g,b),min=Math.min(r,g,b),chroma=max-min;if(chroma>40)saturated++;if(lum>=72&&lum<=225&&chroma<18)midtones++;if(lum<232||chroma>28){foreground++;const bin=((r>>5)<<6)|((g>>5)<<3)|(b>>5);foregroundBins.set(bin,(foregroundBins.get(bin)??0)+1);}}
+  let edgeCount=0,comparisons=0,straight=0;for(let y=1;y<sampleHeight;y++){let run=0;for(let x=1;x<sampleWidth;x++){const index=y*sampleWidth+x;if(Math.abs(gray[index]-gray[index-1])>34){edgeCount++;run++;}else{if(run>=8)straight+=run;run=0;}comparisons++;}if(run>=8)straight+=run;}for(let x=1;x<sampleWidth;x++){let run=0;for(let y=1;y<sampleHeight;y++){const index=y*sampleWidth+x;if(Math.abs(gray[index]-gray[index-sampleWidth])>34){edgeCount++;run++;}else{if(run>=8)straight+=run;run=0;}comparisons++;}if(run>=8)straight+=run;}
+  const total=sampleWidth*sampleHeight,visibleSafe=Math.max(1,visible),foregroundSafe=Math.max(1,foreground);
+  let significantColors=0,majorColors=0;for(const count of foregroundBins.values()){if(count/foregroundSafe>=0.04)significantColors++;if(count/foregroundSafe>=0.08)majorColors++;}
+  const rawDensity=foregroundBins.size/Math.max(12,Math.min(64,Math.sqrt(foregroundSafe)*1.8));
+  const colorComplexity=Math.min(1,rawDensity*0.55+significantColors/12*0.45);
   const dominantPixels=[...foregroundBins.values()].sort((a,b)=>b-a).slice(0,8).reduce((sum,count)=>sum+count,0);
-  return {width,height,hasAlpha:transparent>0,alphaCoverage:transparent/total,edgeDensity:comparisons?edgeCount/comparisons:0,colorComplexity:Math.min(1,paletteDensity),lightBackground:light/visibleSafe,darkInk:dark/visibleSafe,saturation:saturated/visibleSafe,midtoneCoverage:midtones/visibleSafe,paletteConcentration:dominantPixels/foregroundSafe};
+  return {width,height,hasAlpha:transparent>0,alphaCoverage:transparent/total,edgeDensity:comparisons?edgeCount/comparisons:0,colorComplexity,lightBackground:light/visibleSafe,darkInk:dark/visibleSafe,saturation:saturated/visibleSafe,midtoneCoverage:midtones/visibleSafe,paletteConcentration:dominantPixels/foregroundSafe,significantColors,majorColors,straightness:edgeCount?straight/edgeCount:0};
 }
