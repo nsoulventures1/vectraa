@@ -55,16 +55,20 @@ export function classifyImageSignals(signals:ImageSignals):VectorPreset {
     if(flatLogo)return 'logo';
     // Sparse grey ink on a clean light page. Antialiasing creates several grey
     // bins, which used to look like a smooth product photo.
-    const greyInk=saturation<0.08&&lightBackground>0.7&&paletteConcentration>0.9&&darkInk>0.004&&darkInk<0.22&&edgeDensity<0.16;
-    if(greyInk&&(signals.straightness??0)>0.42)return 'line-art';
+    const greyInk=saturation<0.02&&lightBackground>0.7&&paletteConcentration>0.9&&darkInk>0.004&&darkInk<0.22&&edgeDensity<0.16;
     if(greyInk&&colors>=4)return 'signature';
-    if(greyInk&&colors<=3)return 'line-art';
+    if(greyInk&&colors<=2)return 'line-art';
   }
 
-  const productPhotoLike=lightBackground>0.38&&paletteConcentration<0.8&&(
-    midtoneCoverage>0.12
-    || (midtoneCoverage>0.025&&saturation<0.03)
-    || (edgeDensity<0.06&&midtoneCoverage>0.006&&colorComplexity>0.18&&colorComplexity<0.55)
+  // A reflective product can be mostly one grey in the coarse foreground bins, so
+  // palette concentration alone must not send it through the flat-logo tracer.
+  // A real logo on the same kind of light canvas still has at least two substantial inks.
+  const smoothCanvas=edgeDensity<0.06&&midtoneCoverage>0.006&&colorComplexity>0.18&&colorComplexity<0.55;
+  const multiInkMark=(signals.majorColors??0)>=2&&saturation>0.03;
+  const productPhotoLike=lightBackground>0.38&&(
+    (paletteConcentration<0.8&&midtoneCoverage>0.12)
+    || (paletteConcentration<0.8&&midtoneCoverage>0.025&&saturation<0.03)
+    || (smoothCanvas&&!multiInkMark)
   );
   if(productPhotoLike)return 'high-detail';
 
