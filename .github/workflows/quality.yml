@@ -51,6 +51,33 @@ jobs:
           grep -q 'canonical" href="https://vectraa.com/webp-to-svg"' dist/webp-to-svg/index.html
           grep -q '<title>How to Convert a Logo to SVG' dist/guides/convert-logo-to-svg/index.html
           grep -q 'content="article"' dist/guides/png-vs-svg-for-printing/index.html
+          grep -q '<h1>' dist/png-to-svg/index.html
+          grep -q 'PNG → Vector.' dist/png-to-svg/index.html
+          grep -q 'never leave the browser' dist/privacy/index.html
+          grep -q 'Vectraa converts images to vectors' dist/about/index.html
+          grep -q 'https://vectraa.com/signature-to-svg' dist/sitemap.xml
+          grep -q 'https://vectraa.com/privacy' dist/sitemap.xml
+          grep -q 'https://vectraa.com/about' dist/sitemap.xml
+          grep -q '<lastmod>2026-11-22</lastmod>' dist/sitemap.xml
+          test -f dist/404.html
+          test -f dist/favicon.ico
+          test -f dist/icon.svg
+          test -f dist/apple-touch-icon.png
+          test -f dist/icon-192.png
+          test -f dist/icon-512.png
+          test -f dist/og-image.png
+          grep -q 'content="noindex"' dist/404.html
+          grep -q 'This page is not on Vectraa.' dist/404.html
+          if grep -q 'rel="canonical"' dist/404.html; then
+            echo '404 page must not repeat the homepage canonical.' >&2
+            exit 1
+          fi
+          grep -q 'static.cloudflareinsights.com' dist/_headers
+          grep -q 'https://cloudflareinsights.com' dist/_headers
+          grep -q 'Strict-Transport-Security' dist/_headers
+          grep -q 'og-image.png' dist/png-to-svg/index.html
+          grep -q 'FAQPage' dist/guides/convert-logo-to-svg/index.html
+          grep -q 'SoftwareApplication' dist/index.html
           if find dist -type f -name '*.map' | grep -q .; then
             echo 'Unexpected source maps found in production bundle.' >&2
             exit 1

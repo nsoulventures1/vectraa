@@ -7,8 +7,12 @@ describe('SEO landing pages', () => {
     expect(new Set(LANDING_PAGES.map((page) => page.path)).size).toBe(LANDING_PAGES.length);
     expect(new Set(LANDING_PAGES.map((page) => page.title)).size).toBe(LANDING_PAGES.length);
     for (const page of LANDING_PAGES) {
+      expect(page.title).toContain('Vectraa');
       expect(page.description.length).toBeGreaterThan(80);
       expect(page.benefits).toHaveLength(3);
+    }
+    for (const path of ['/signature-to-svg', '/png-to-svg-for-cricut', '/image-to-vector', '/png-to-svg-no-upload', '/convert-logo-to-svg']) {
+      expect(LANDING_PAGES.some((page) => page.path === path)).toBe(true);
     }
   });
 
@@ -25,7 +29,9 @@ describe('search-focused guides', () => {
     for (const page of GUIDE_PAGES) {
       expect(page.path.startsWith('/guides/')).toBe(true);
       expect(page.description.length).toBeGreaterThan(100);
+      expect(page.title).toContain('Vectraa');
       expect(page.sections.length).toBeGreaterThanOrEqual(4);
+      expect(page.faqs.length).toBeGreaterThanOrEqual(3);
       expect(LANDING_PAGES.some((landing) => landing.path === page.relatedConverter.path)).toBe(true);
     }
   });

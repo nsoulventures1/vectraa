@@ -1,3 +1,5 @@
+import type { Faq } from './faq';
+
 export type GuideSection = {
   heading: string;
   paragraphs: string[];
@@ -14,6 +16,7 @@ export type GuidePage = {
   updated: string;
   readingTime: string;
   sections: GuideSection[];
+  faqs: Faq[];
   relatedConverter: { path: string; label: string };
 };
 
@@ -25,9 +28,14 @@ export const GUIDE_PAGES: GuidePage[] = [
     eyebrow: 'LOGO VECTORIZATION GUIDE',
     heading: 'How to convert a logo to SVG without losing quality',
     lead: 'A practical workflow for turning raster brand artwork into scalable paths while preserving edges, colors and recognizable geometry.',
-    updated: 'October 5, 2026',
+    updated: 'November 22, 2026',
     readingTime: '6 min read',
     relatedConverter: { path: '/logo-vectorizer', label: 'Vectorize your logo free' },
+    faqs: [
+      { question: 'What file should I start with when converting a logo?', answer: 'Use the largest, cleanest version you have. A transparent PNG is usually easier to trace than a small JPEG or a screenshot.' },
+      { question: 'Does Vectraa upload my logo?', answer: 'No. Basic conversion runs in your browser. The logo image and the SVG are not uploaded to Vectraa.' },
+      { question: 'When is automatic tracing not enough?', answer: 'Very small text, gradients, photographic effects and badly damaged artwork may need a manual redraw. Keep an approved brand master as the reference.' },
+    ],
     sections: [
       {
         heading: 'Start with the strongest source file',
@@ -56,9 +64,14 @@ export const GUIDE_PAGES: GuidePage[] = [
     eyebrow: 'PRINT FILE GUIDE',
     heading: 'PNG vs SVG for printing: which format should you use?',
     lead: 'Choose the right artwork format for print, packaging, apparel and signage without confusing resolution with vector quality.',
-    updated: 'October 5, 2026',
+    updated: 'November 22, 2026',
     readingTime: '5 min read',
     relatedConverter: { path: '/png-to-svg', label: 'Convert PNG to SVG free' },
+    faqs: [
+      { question: 'Should I print from PNG or SVG?', answer: 'Use SVG for logos, icons, lettering and flat illustrations that must scale. Use a high-resolution PNG for photographs and textured artwork when the pixel size already fits the print.' },
+      { question: 'Does an SVG always print sharply?', answer: 'A genuine path-based SVG scales cleanly. An SVG that only embeds a raster image does not. Confirm the file contains paths before you send it.' },
+      { question: 'Can I send an SVG straight to a printer?', answer: 'Often, yes. Still confirm color mode, bleed, fonts and the preferred file format with the vendor. SVG support varies by workflow.' },
+    ],
     sections: [
       {
         heading: 'The short answer',
@@ -86,9 +99,14 @@ export const GUIDE_PAGES: GuidePage[] = [
     eyebrow: 'CUTTING WORKFLOW GUIDE',
     heading: 'How to prepare an SVG for Cricut and laser cutting',
     lead: 'Turn traced artwork into a practical cutting file by controlling complexity, overlaps, small gaps and production tolerances.',
-    updated: 'October 5, 2026',
+    updated: 'November 22, 2026',
     readingTime: '6 min read',
     relatedConverter: { path: '/line-art-vectorizer', label: 'Vectorize line art free' },
+    faqs: [
+      { question: 'What artwork traces well for Cricut?', answer: 'Solid silhouettes, clear outlines and limited colors. Photographs, soft shadows and textured artwork make poor cutting files.' },
+      { question: 'Does Vectraa set blade or laser power?', answer: 'No. Blade, speed, power and material settings belong in the machine software. Import the SVG, check the physical size, and test on scrap.' },
+      { question: 'How do I avoid a messy cut?', answer: 'Delete specks left by image noise, watch the path count, and leave enough space between cut lines for the material.' },
+    ],
     sections: [
       {
         heading: 'Begin with simple, high-contrast artwork',
@@ -116,9 +134,14 @@ export const GUIDE_PAGES: GuidePage[] = [
     eyebrow: 'SVG CLEANUP GUIDE',
     heading: 'How to reduce SVG nodes and file size after tracing',
     lead: 'Make automatically traced vectors easier to edit, share and manufacture without flattening the details that matter.',
-    updated: 'October 5, 2026',
+    updated: 'November 22, 2026',
     readingTime: '5 min read',
     relatedConverter: { path: '/image-to-svg', label: 'Create a cleaner SVG' },
+    faqs: [
+      { question: 'Why do traced SVGs have so many nodes?', answer: 'A tracer follows pixel edges. Compression noise, gradients, shadows and texture become extra paths and nodes. More nodes are not automatically a better vector.' },
+      { question: 'Does fewer nodes always look better?', answer: 'No. Simplify until the silhouette and important gaps still match the original, then stop. If a reduction closes a counter in a letter, keep the detail.' },
+      { question: 'How should I read Vectraa’s quality report?', answer: 'Paths, approximate nodes, file size and visual fidelity are warnings, not a universal pass or fail. A simple logo should stay compact. A detailed illustration can legitimately be complex.' },
+    ],
     sections: [
       {
         heading: 'Why traced SVGs become complex',
