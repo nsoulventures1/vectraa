@@ -1,22 +1,39 @@
 # Vectraa
 
-> Vectraa is a free, private, browser-based image-to-SVG vector converter. Core conversion runs on the visitor's device and does not require an account or add a watermark.
+> Vectraa is a free, private, browser-based image-to-SVG vector converter. Core conversion runs on the visitor's device. Images and SVGs are not uploaded. No account and no watermark are required.
 
 ## Converter pages
 
 - [Image to SVG](https://vectraa.com/image-to-svg): Convert JPG, PNG, and WebP artwork to genuine SVG paths.
+- [Image to vector online free](https://vectraa.com/image-to-vector): Free online image-to-vector conversion with no account.
 - [PNG to SVG](https://vectraa.com/png-to-svg): Convert transparent PNG logos, icons, and artwork.
+- [PNG to SVG, no upload](https://vectraa.com/png-to-svg-no-upload): Trace a PNG in the browser without uploading it.
+- [PNG to SVG for Cricut](https://vectraa.com/png-to-svg-for-cricut): Prepare a high-contrast PNG as SVG paths for cutting.
 - [JPG to SVG](https://vectraa.com/jpg-to-svg): Convert JPEG artwork with cleanup for compression noise.
 - [WebP to SVG](https://vectraa.com/webp-to-svg): Convert WebP graphics to scalable SVG paths.
-- [Logo Vectorizer](https://vectraa.com/logo-vectorizer): Restore and vectorize logo artwork.
-- [Line Art Vectorizer](https://vectraa.com/line-art-vectorizer): Convert drawings, outlines, and signatures.
+- [Logo vectorizer](https://vectraa.com/logo-vectorizer): Restore and vectorize logo artwork.
+- [Convert logo to SVG](https://vectraa.com/convert-logo-to-svg): Convert a raster logo to SVG paths.
+- [Signature to SVG](https://vectraa.com/signature-to-svg): Trace a scanned signature with the signature preset.
+- [Line art vectorizer](https://vectraa.com/line-art-vectorizer): Convert drawings, outlines, and signatures.
+
+## Guides
+
+- [Convert a logo to SVG](https://vectraa.com/guides/convert-logo-to-svg)
+- [PNG vs SVG for printing](https://vectraa.com/guides/png-vs-svg-for-printing)
+- [Prepare an SVG for Cricut and laser cutting](https://vectraa.com/guides/prepare-svg-for-cricut-laser-cutting)
+- [Reduce SVG nodes](https://vectraa.com/guides/reduce-svg-nodes)
+
+## Policies
+
+- [Privacy](https://vectraa.com/privacy): Images never leave the browser for basic conversion.
+- [About](https://vectraa.com/about): What Vectraa is and how to start.
 
 ## Product facts
 
 - Generates SVG geometry rather than wrapping a raster image inside SVG.
 - Supports JPG, PNG, and WebP inputs up to 20 MB.
 - Includes adaptive best-of-three tracing, Logo Rescue, before/after comparison, vector health checks, and purpose-aware export guidance.
-- Core conversion is processed locally in the browser.
+- Core conversion is processed locally in the browser. The image is not uploaded.
 - No account and no watermark are required for basic conversion.
 
 ## Canonical site
