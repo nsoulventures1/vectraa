@@ -1,5 +1,2 @@
-# Workers static-asset redirects cannot change the hostname, so this file
-# cannot send www.vectraa.com to the apex. Add a 301 Redirect Rule on the
-# Cloudflare zone instead:
-#   https://www.vectraa.com/*  →  https://vectraa.com/:splat
-# Preserve the query string. Confirm www is proxied (orange cloud) on this zone.
+# Workers static-asset redirects cannot change the hostname.
+# www.vectraa.com 301s to https://vectraa.com in src/edge/worker.ts.

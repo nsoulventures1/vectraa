@@ -1,9 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "vectraa",
+  "main": "./src/edge/worker.ts",
   "compatibility_date": "2026-08-15",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
+    // Hostname redirect must run before asset, HTML, and 404 handling.
+    "run_worker_first": true,
     // Unknown URLs serve dist/404.html with HTTP 404 instead of the homepage.
     "not_found_handling": "404-page",
     // /png-to-svg and /png-to-svg/ both resolve to the slash-free canonical URL.
