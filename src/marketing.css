@@ -143,6 +143,19 @@
   max-width: 1060px;
 }
 
+.heroLinks {
+  color: #5b6760;
+  font-size: 15px;
+  line-height: 1.65;
+  margin: 14px auto 0;
+  max-width: 650px;
+}
+
+.heroLinks a {
+  color: #1f5536;
+  font-weight: 750;
+}
+
 @media (max-width: 760px) {
   .faqList { grid-template-columns: 1fr; }
   .guideCards { grid-template-columns: 1fr; }

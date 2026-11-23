@@ -49,12 +49,12 @@ jobs:
           grep -q 'Content-Security-Policy' dist/_headers
           grep -q 'User-agent:' dist/robots.txt
           grep -q '"name": "Vectraa' dist/site.webmanifest
-          grep -q '<title>JPG to SVG Converter' dist/jpg-to-svg/index.html
+          grep -q '<title>JPG to SVG Converter — Free JPG to Vector Online | Vectraa' dist/jpg-to-svg/index.html
           grep -q 'canonical" href="https://vectraa.com/webp-to-svg"' dist/webp-to-svg/index.html
           grep -q '<title>How to Convert a Logo to SVG' dist/guides/convert-logo-to-svg/index.html
           grep -q 'content="article"' dist/guides/png-vs-svg-for-printing/index.html
           grep -q '<h1>' dist/png-to-svg/index.html
-          grep -q 'PNG → Vector.' dist/png-to-svg/index.html
+          grep -q '<h1>PNG to SVG converter.</h1>' dist/png-to-svg/index.html
           grep -q 'never leave the browser' dist/privacy/index.html
           grep -q 'Vectraa converts images to vectors' dist/about/index.html
           grep -q 'https://vectraa.com/signature-to-svg' dist/sitemap.xml

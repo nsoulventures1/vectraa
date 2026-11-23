@@ -105,8 +105,25 @@ describe('prerendered HTML', () => {
       expect(document.body).not.toContain('<div id="root"></div>');
     }
     const png = renderedDocuments().find((page) => page.path === '/png-to-svg');
-    expect(png?.body).toContain('PNG → Vector.');
+    expect(png?.body).toContain('<h1>PNG to SVG converter.</h1>');
+    expect(png?.body).toContain('href="/guides/png-vs-svg-for-printing"');
+    expect(png?.body).toContain('href="/guides/prepare-svg-for-cricut-laser-cutting"');
+    expect(png?.body).toContain('href="/png-to-svg-for-cricut"');
     expect(png?.body).toContain('Transparent artwork');
+    const jpg = renderedDocuments().find((page) => page.path === '/jpg-to-svg');
+    expect(jpg?.title).toBe('JPG to SVG Converter — Free JPG to Vector Online | Vectraa');
+    expect(jpg?.body).toContain('<h1>JPG to SVG — a free JPG to vector converter.</h1>');
+    expect(jpg?.body).toContain('href="/image-to-svg"');
+    const webp = renderedDocuments().find((page) => page.path === '/webp-to-svg');
+    expect(webp?.body).toContain('<h1>WebP to SVG converter.</h1>');
+    expect(webp?.body).toContain('href="/guides/reduce-svg-nodes"');
+    const image = renderedDocuments().find((page) => page.path === '/image-to-svg');
+    expect(image?.body).toContain('<h1>Image to SVG — a free vector image converter.</h1>');
+    expect(image?.description).toContain('no upload, no account and no watermark');
+    const home = renderedDocuments().find((page) => page.path === '/');
+    expect(home?.heading).toBe('Anything → Vector.');
+    expect(home?.body).toContain('<h1>Anything <span>→</span> Vector.</h1>');
+    expect(home?.body).not.toContain('class="heroLinks"');
     const privacy = renderedDocuments().find((page) => page.path === '/privacy');
     expect(privacy?.body.toLowerCase()).toContain('never leave the browser');
     expect(INFO_PAGES).toHaveLength(2);
