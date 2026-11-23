@@ -28,6 +28,8 @@ jobs:
         run: npm test
       - name: Build production site
         run: npm run build
+      - name: Parse built JSON-LD and favicon links
+        run: npx vitest run tests/built-head.test.ts
       - name: Validate deployment bundle
         shell: bash
         run: |
@@ -62,6 +64,8 @@ jobs:
           test -f dist/404.html
           test -f dist/favicon.ico
           test -f dist/icon.svg
+          test -f dist/favicon-96x96.png
+          test -f dist/favicon-192x192.png
           test -f dist/apple-touch-icon.png
           test -f dist/icon-192.png
           test -f dist/icon-512.png
@@ -78,6 +82,11 @@ jobs:
           grep -q 'og-image.png' dist/png-to-svg/index.html
           grep -q 'FAQPage' dist/guides/convert-logo-to-svg/index.html
           grep -q 'SoftwareApplication' dist/index.html
+          grep -q 'favicon-96x96.png' dist/index.html
+          grep -q 'favicon-192x192.png' dist/png-to-svg/index.html
+          grep -q 'favicon-96x96.png' dist/about/index.html
+          grep -q 'favicon-192x192.png' dist/404.html
+          grep -q '"alternateName":\["vectraa.com","Vectraa SVG Converter"\]' dist/index.html
           if find dist -type f -name '*.map' | grep -q .; then
             echo 'Unexpected source maps found in production bundle.' >&2
             exit 1
