@@ -1,7 +1,7 @@
 import { HOME_FAQS } from './faq';
 import { GUIDE_PAGES, type GuidePage } from './guides';
 import { INFO_PAGES, type InfoPage } from './info';
-import { LANDING_PAGES, type LandingPage } from './landing';
+import { inlineLinkSegments, LANDING_PAGES, type LandingPage } from './landing';
 
 const HOME_TITLE = 'Vectraa — Free JPG, PNG & WebP to SVG Vector Converter';
 const HOME_DESCRIPTION = 'Vectraa is a free online vector converter for turning JPG, PNG and WebP images into clean SVG paths. Smart tracing, no account, and private browser processing. Images are not uploaded.';
@@ -38,6 +38,12 @@ function faqBlock(items: Array<{ question: string; answer: string }>): string {
   return `<section id="faq" class="contentSection"><span class="sectionKicker">FAQ</span><h2>Useful answers before you export.</h2><div class="faqList">${details}</div></section>`;
 }
 
+function inlineLinksHtml(source: string): string {
+  return inlineLinkSegments(source).map((segment) => segment.href
+    ? `<a href="${escapeHtml(segment.href)}">${escapeHtml(segment.text)}</a>`
+    : escapeHtml(segment.text)).join('');
+}
+
 function studio(): string {
   return `<section class="studio" aria-label="Converter"><div class="source card"><div class="cardHead"><span>ORIGINAL</span></div><div class="drop"><span class="uploadIcon">↑</span><strong>Drop your image here</strong><small>The converter runs in your browser. JPG, PNG, WebP · up to 20 MB. Your image is not uploaded.</small></div></div><div class="result card"><div class="cardHead"><span>VECTOR</span></div><div class="empty"><span>◇</span><strong>Your vector will appear here</strong><small>Real SVG paths — not a raster image wrapped in an SVG file.</small></div></div></section>`;
 }
@@ -52,7 +58,8 @@ export function renderHomeBody(): string {
 }
 
 export function renderLandingBody(page: LandingPage): string {
-  return `${header([{ href: '/', label: 'Converter' }, { href: '#how-it-works', label: 'How it works' }, { href: '/about', label: 'About' }, { href: '/privacy', label: 'Privacy' }, { href: '#faq', label: 'FAQ' }])}<main><section class="hero"><p class="eyebrow">${escapeHtml(page.eyebrow)}</p><h1>${escapeHtml(page.heading)}</h1><p class="lead">${escapeHtml(page.lead)}</p></section>${studio()}${homeSections(page)}${footer()}</main>`;
+  const links = page.links ? `<p class="heroLinks">${inlineLinksHtml(page.links)}</p>` : '';
+  return `${header([{ href: '/', label: 'Converter' }, { href: '#how-it-works', label: 'How it works' }, { href: '/about', label: 'About' }, { href: '/privacy', label: 'Privacy' }, { href: '#faq', label: 'FAQ' }])}<main><section class="hero"><p class="eyebrow">${escapeHtml(page.eyebrow)}</p><h1>${escapeHtml(page.heading)}</h1><p class="lead">${escapeHtml(page.lead)}</p>${links}</section>${studio()}${homeSections(page)}${footer()}</main>`;
 }
 
 export function renderGuideBody(page: GuidePage): string {

@@ -1,3 +1,6 @@
+import { GUIDE_PAGES } from './guides';
+import { INFO_PAGES } from './info';
+
 export type LandingPage = {
   path: string;
   title: string;
@@ -5,18 +8,48 @@ export type LandingPage = {
   eyebrow: string;
   heading: string;
   lead: string;
+  links?: string;
   intro: string;
   benefits: Array<{ title: string; body: string }>;
 };
 
+export type InlineSegment = { text: string; href?: string };
+
+const INLINE_LINK = /\[([^[\]]+)\]\((\/[^)\s]*)\)/g;
+
+function knownContentPaths(): Set<string> {
+  return new Set([
+    '/',
+    ...LANDING_PAGES.map((page) => page.path),
+    ...GUIDE_PAGES.map((page) => page.path),
+    ...INFO_PAGES.map((page) => page.path),
+  ]);
+}
+
+export function inlineLinkSegments(source: string): InlineSegment[] {
+  const allowed = knownContentPaths();
+  const segments: InlineSegment[] = [];
+  let cursor = 0;
+  for (const match of source.matchAll(INLINE_LINK)) {
+    const index = match.index ?? 0;
+    if (index > cursor) segments.push({ text: source.slice(cursor, index) });
+    const href = match[2];
+    if (allowed.has(href)) segments.push({ text: match[1], href });
+    cursor = index + match[0].length;
+  }
+  if (cursor < source.length) segments.push({ text: source.slice(cursor) });
+  return segments;
+}
+
 export const LANDING_PAGES: LandingPage[] = [
   {
     path: '/png-to-svg',
-    title: 'PNG to SVG Converter — Free & Private | Vectraa',
-    description: 'Convert PNG artwork to genuine SVG paths in your browser. Preserve transparency, inspect the result and download without an account or watermark.',
+    title: 'PNG to SVG Converter — Free, No Upload | Vectraa',
+    description: 'Convert PNG to SVG online, free in your browser. Vectraa traces transparent PNG artwork into genuine SVG paths with no upload, no account and no watermark.',
     eyebrow: 'FREE PNG TO SVG CONVERTER',
-    heading: 'PNG → Vector.',
-    lead: 'Turn transparent PNG logos, icons and artwork into clean, scalable SVG paths directly in your browser.',
+    heading: 'PNG to SVG converter.',
+    lead: 'Convert a PNG to SVG in your browser, for free. Transparency is preserved, the file is not uploaded, and the download has no watermark.',
+    links: 'Using the SVG for print or cutting? Read [PNG vs SVG for printing](/guides/png-vs-svg-for-printing) and [how to prepare an SVG for Cricut and laser cutting](/guides/prepare-svg-for-cricut-laser-cutting), or try [PNG to SVG for Cricut](/png-to-svg-for-cricut).',
     intro: 'PNG is excellent for finished raster artwork, but it becomes blurry when enlarged. Vectraa analyzes edges, colors and transparency before choosing a tracing workflow for a reusable SVG.',
     benefits: [
       { title: 'Preserve transparency', body: 'Transparent artwork is detected and routed through a suitable vector workflow.' },
@@ -26,11 +59,12 @@ export const LANDING_PAGES: LandingPage[] = [
   },
   {
     path: '/jpg-to-svg',
-    title: 'JPG to SVG Converter — Free Online Vectorizer | Vectraa',
-    description: 'Convert JPG and JPEG images to editable SVG vector paths with smart tracing, Logo Rescue and private browser processing.',
+    title: 'JPG to SVG Converter — Free JPG to Vector Online | Vectraa',
+    description: 'Convert a JPG to SVG or a vector online, free in your browser. Vectraa traces JPEG images into editable SVG paths with no upload, no account and no watermark.',
     eyebrow: 'FREE JPG TO SVG CONVERTER',
-    heading: 'JPG → Vector.',
-    lead: 'Convert JPEG logos, illustrations and artwork into scalable SVG with automatic analysis and smart tracing.',
+    heading: 'JPG to SVG — a free JPG to vector converter.',
+    lead: 'Convert a JPG or JPEG to SVG online, in your browser. This free JPG-to-vector converter does not upload your image and does not add a watermark to the SVG.',
+    links: 'For other formats, use the [image to SVG](/image-to-svg) or [PNG to SVG](/png-to-svg) converter. If the JPG is a logo, see [how to convert a logo to SVG](/guides/convert-logo-to-svg).',
     intro: 'JPEG compression can introduce noise and blurred edges. Vectraa evaluates the source first, then applies a suitable preset or Logo Rescue workflow before tracing.',
     benefits: [
       { title: 'Clean compressed artwork', body: 'Logo Rescue can simplify colors, reduce noise and remove near-white backgrounds.' },
@@ -40,11 +74,12 @@ export const LANDING_PAGES: LandingPage[] = [
   },
   {
     path: '/webp-to-svg',
-    title: 'WebP to SVG Converter — Free & Browser-Based | Vectraa',
-    description: 'Convert WebP graphics to scalable SVG paths privately in your browser. No account, no watermark and no software installation.',
+    title: 'WebP to SVG Converter — Free, No Upload | Vectraa',
+    description: 'Convert WebP to SVG online, free in your browser. Vectraa traces WebP graphics into scalable SVG paths with no upload, no account and no watermark.',
     eyebrow: 'FREE WEBP TO SVG CONVERTER',
-    heading: 'WebP → Vector.',
-    lead: 'Transform WebP logos, icons and illustrations into editable, resolution-independent SVG artwork.',
+    heading: 'WebP to SVG converter.',
+    lead: 'Convert WebP to SVG in your browser, for free. The image stays on your device — no upload and no watermark on the download.',
+    links: 'You can also convert a [PNG](/png-to-svg), [JPG](/jpg-to-svg) or any [image to SVG](/image-to-svg). After tracing, [reduce SVG nodes](/guides/reduce-svg-nodes) if the file is too complex.',
     intro: 'WebP reduces image size for the web, while SVG provides scalable geometry. Vectraa analyzes your WebP and selects an adaptive tracing workflow for its visual structure.',
     benefits: [
       { title: 'Browser-based', body: 'Convert on a current desktop browser without installing design software.' },
@@ -68,11 +103,12 @@ export const LANDING_PAGES: LandingPage[] = [
   },
   {
     path: '/image-to-svg',
-    title: 'Image to SVG Converter — Free Online Vectorizer | Vectraa',
-    description: 'Convert JPG, PNG and WebP images to genuine SVG vector paths with adaptive tracing, comparison tools and private local processing.',
+    title: 'Image to SVG Converter — Free Image to Vector, No Upload | Vectraa',
+    description: 'Free image to SVG and vector image converter that runs in your browser. Vectraa traces JPG, PNG and WebP into real SVG paths — no upload, no account and no watermark.',
     eyebrow: 'FREE IMAGE TO SVG CONVERTER',
-    heading: 'Image → Vector.',
-    lead: 'Convert raster artwork into scalable SVG paths with automatic image analysis and best-of-three tracing.',
+    heading: 'Image to SVG — a free vector image converter.',
+    lead: 'Convert an image to SVG or a vector in your browser, for free. Vectraa is an image-to-vector converter that traces JPG, PNG and WebP into genuine SVG paths. Your file is not uploaded, and the download has no watermark.',
+    links: 'Need a specific format? Try the [JPG to SVG](/jpg-to-svg), [PNG to SVG](/png-to-svg) or [WebP to SVG](/webp-to-svg) converter, or read the guides on [converting a logo](/guides/convert-logo-to-svg) and [reducing SVG nodes](/guides/reduce-svg-nodes).',
     intro: 'Different artwork needs different treatment. Vectraa evaluates detail, colors, transparency and edge structure before recommending a vector workflow.',
     benefits: [
       { title: 'Automatic analysis', body: 'Artwork is classified as a logo, illustration, line art, signature or high-detail image.' },
