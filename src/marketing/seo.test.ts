@@ -1,8 +1,25 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { INFO_PAGES } from './info';
 import { indexableRoutes, sitemapXml } from './routes';
 import { buildPageSchema } from './schema';
 import { NOT_FOUND_DOCUMENT, escapeHtml, renderedDocuments } from './staticDocument';
+
+const ICON_LINKS = [
+  '<link rel="icon" href="/favicon.ico" sizes="48x48" />',
+  '<link rel="icon" href="/icon.svg" type="image/svg+xml" />',
+  '<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png" />',
+  '<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png" />',
+];
+
+function graphNode(graph: object[], type: string): Record<string, unknown> {
+  const node = graph.find((entry) => {
+    const kind = (entry as { '@type'?: string | string[] })['@type'];
+    return kind === type || (Array.isArray(kind) && kind.includes(type));
+  });
+  expect(node, type).toBeTruthy();
+  return node as Record<string, unknown>;
+}
 
 describe('indexable routes', () => {
   it('lists privacy, about and the new converters once each', () => {
@@ -39,6 +56,23 @@ describe('structured data', () => {
     expect(serialized).toContain('WebApplication');
     expect(serialized).toContain('FAQPage');
     expect(serialized).toContain('Does my image leave my browser?');
+    const parsed = JSON.parse(serialized) as { '@graph': object[] };
+    expect(graphNode(parsed['@graph'], 'Organization')).toMatchObject({
+      name: 'Vectraa',
+      alternateName: ['vectraa.com', 'Vectraa SVG Converter'],
+      url: 'https://vectraa.com/',
+      logo: { '@type': 'ImageObject', url: 'https://vectraa.com/icon-512.png', width: 512, height: 512 },
+    });
+    expect(graphNode(parsed['@graph'], 'WebSite')).toMatchObject({
+      name: 'Vectraa',
+      alternateName: 'vectraa.com',
+      url: 'https://vectraa.com/',
+      publisher: { '@id': 'https://vectraa.com/#organization' },
+    });
+    expect(graphNode(parsed['@graph'], 'SoftwareApplication')).toMatchObject({
+      publisher: { '@id': 'https://vectraa.com/#organization' },
+    });
+    expect(serialized).not.toContain('sameAs');
   });
 
   it('adds FAQPage structured data to guides', () => {
@@ -86,5 +120,52 @@ describe('prerendered HTML', () => {
 
   it('escapes text that could break HTML', () => {
     expect(escapeHtml(`<script>"&"`)).toBe('&lt;script&gt;&quot;&amp;&quot;');
+  });
+});
+
+describe('homepage head', () => {
+  const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+
+  it('names Vectraa in the title and site name', () => {
+    expect(html).toMatch(/<title>[^<]*Vectraa[^<]*<\/title>/);
+    expect(html).toContain('<meta property="og:site_name" content="Vectraa" />');
+  });
+
+  it('parses brand JSON-LD and keeps the application linked to the organization', () => {
+    const json = html.match(/<script id="vectraa-page-schema" type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1];
+    expect(json).toBeTruthy();
+    const schema = JSON.parse(json!) as { '@context': string; '@graph': object[] };
+    expect(schema['@context']).toBe('https://schema.org');
+    expect(graphNode(schema['@graph'], 'Organization')).toMatchObject({
+      '@id': 'https://vectraa.com/#organization',
+      name: 'Vectraa',
+      alternateName: ['vectraa.com', 'Vectraa SVG Converter'],
+      url: 'https://vectraa.com/',
+      logo: { '@type': 'ImageObject', url: 'https://vectraa.com/icon-512.png', width: 512, height: 512 },
+    });
+    expect(graphNode(schema['@graph'], 'WebSite')).toMatchObject({
+      name: 'Vectraa',
+      alternateName: 'vectraa.com',
+      url: 'https://vectraa.com/',
+      publisher: { '@id': 'https://vectraa.com/#organization' },
+    });
+    expect(graphNode(schema['@graph'], 'WebApplication')).toMatchObject({
+      publisher: { '@id': 'https://vectraa.com/#organization' },
+    });
+    expect(json).not.toContain('sameAs');
+  });
+
+  it('links the existing icons and the square PNG favicons', () => {
+    for (const link of ICON_LINKS) expect(html).toContain(link);
+  });
+
+  it('keeps the SVG icon on a white canvas with a viewBox', () => {
+    const svg = readFileSync(new URL('../../public/icon.svg', import.meta.url), 'utf8');
+    expect(svg).toContain('viewBox="0 0 32 32"');
+    expect(svg).toContain('width="32"');
+    expect(svg).toContain('height="32"');
+    expect(svg).toContain('fill="#ffffff"');
+    expect(svg).toContain('fill="#1f5536"');
+    expect(svg).toContain('fill="#f7f8f5"');
   });
 });
